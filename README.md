@@ -48,7 +48,7 @@ Windows PowerShell tools are hidden in WSL workspaces; ordinary Windows workspac
 Install the local directory from DSH's Plugins page, or:
 
 ```powershell
-dsh plugin --profile desktop add github:MFJip612/dsh-remote-wsl
+dsh plugin --profile web add github:MFJip612/dsh-remote-wsl
 ```
 
 You can also ask the agent in a session to install that directory with the plugin manager. `link:` only guarantees that files in this directory are read; it does not guarantee a running Host reloads code. **Under the default configuration, Host-side code changes require a full quit and restart of DSH**; browser-side code changes only need a page refresh. DSH's default HMR configuration is `root: []`, which watches only configuration files. If the quit prompt reports a running task, wait for it to finish before restarting.

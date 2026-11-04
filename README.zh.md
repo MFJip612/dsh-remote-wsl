@@ -48,7 +48,7 @@ Windows 的 PowerShell 工具在 WSL 工作区里会被隐藏，普通 Windows �
 在 DSH 的「插件」页面安装本地目录，或者：
 
 ```powershell
-dsh plugin --profile desktop add github:MFJip612/dsh-remote-wsl
+dsh plugin --profile web add github:MFJip612/dsh-remote-wsl
 ```
 
 也可以在会话里让 agent 用插件管理器安装该目录。`link:` 只保证读取本目录的文件，不保证已经运行的 Host 重载代码。**默认配置下，Host 侧代码更新后需要完全退出并重启 DSH**；浏览器侧代码更新后刷新页面即可。DSH 的默认 HMR 配置是 `root: []`，只监听配置文件。如果退出提示有任务正在运行，请先等任务完成再重启。

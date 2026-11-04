@@ -1,9 +1,16 @@
 {
+  "id": "dsh-remote-wsl",
   "name": "dsh-remote-wsl",
   "version": "0.1.2",
   "private": true,
   "type": "module",
-  "description": "Connect a project inside a WSL distribution as a DSH workspace, with a Linux terminal and Linux-side agent tools.",
+  "description": "",
+  "repository": "https://github.com/MFJip612/dsh-remote-wsl",
+  "author": {
+    "name": "MFJip612",
+    "github": "MFJip612",
+    "avatar": "https://avatars.githubusercontent.com/u/103869422?v=4"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -21,9 +28,13 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node test/pure.test.js && node test/run.js && node test/tools.test.js && node test/registration.test.js",
-    "test:all": "node test/pure.test.js && node test/run.js && node test/tools.test.js && node test/registration.test.js",
-    "check": "node --check index.js && node --check client.js && node --check lib/agent-tools.js && node --check lib/tool-defs.js && node --check lib/tool-wsl.js && node --check lib/file-integration.js && node --check lib/wsl-workspaces.js && node --check lib/legacy-inbox.js && node --check scripts/repair-legacy.cjs && node --check test/desktop-runtime.cjs && node --check test/desktop-deliveries.cjs"
+    "build": "npm run build:host && npm run build:client && npm run build:cjs",
+    "build:host": "tsc -p tsconfig.host.json",
+    "build:client": "tsc -p tsconfig.client.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "test": "npm run build && node test/pure.test.js && node test/run.js && node test/tools.test.js && node test/registration.test.js",
+    "test:all": "npm test",
+    "check": "npm run build"
   },
   "dsh": {
     "bundle": {
@@ -37,5 +48,26 @@
       ]
     }
   },
-  "license": "MIT"
+  "license": "MIT",
+  "category": "tool",
+  "status": "unverified",
+  "declaredCompatibility": "not stated",
+  "verifiedVersions": [],
+  "lastVerifiedAt": null,
+  "installCommand": null,
+  "documentationUrl": "https://github.com/MFJip612/dsh-remote-wsl",
+  "stars": 1,
+  "forks": 0,
+  "lastCommitAt": "2026-11-04T13:01:15Z",
+  "indexedAt": "2026-11-04T13:02:12.125Z",
+  "updatedAt": "2026-11-04T13:02:12.125Z",
+  "source": "manual-submission",
+  "dshManifest": "bundle",
+  "topics": [],
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2"
+  }
 }
