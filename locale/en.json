@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WSL project connection",
+    "description": "Add a project inside a WSL distribution as a workspace from the add-workspace flow, with the sidebar terminal and the agent file tools running inside the distribution through wsl.exe."
+  }
+}

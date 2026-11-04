@@ -1,0 +1,41 @@
+{
+  "name": "dsh-remote-wsl",
+  "version": "0.1.2",
+  "private": true,
+  "type": "module",
+  "description": "Connect a project inside a WSL distribution as a DSH workspace, with a Linux terminal and Linux-side agent tools.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/*.js",
+    "scripts/repair-legacy.cjs",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node test/pure.test.js && node test/run.js && node test/tools.test.js && node test/registration.test.js",
+    "test:all": "node test/pure.test.js && node test/run.js && node test/tools.test.js && node test/registration.test.js",
+    "check": "node --check index.js && node --check client.js && node --check lib/agent-tools.js && node --check lib/tool-defs.js && node --check lib/tool-wsl.js && node --check lib/file-integration.js && node --check lib/wsl-workspaces.js && node --check lib/legacy-inbox.js && node --check scripts/repair-legacy.cjs && node --check test/desktop-runtime.cjs && node --check test/desktop-deliveries.cjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  },
+  "license": "MIT"
+}

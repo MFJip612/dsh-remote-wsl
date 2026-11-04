@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="dsh-remote-wsl">
+  <defs>
+    <linearGradient id="drw-g" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3f7fbf"/>
+      <stop offset="1" stop-color="#24507a"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="8" width="56" height="48" rx="9" fill="url(#drw-g)"/>
+  <path d="M14 22l8 7-8 7" fill="none" stroke="#eaf3ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M27 36h9" fill="none" stroke="#eaf3ff" stroke-width="4" stroke-linecap="round"/>
+  <path d="M36 27c5 0 8 3 8 7s3 7 8 7" fill="none" stroke="#9fd0ff" stroke-width="3" stroke-linecap="round" opacity="0.85"/>
+  <circle cx="52" cy="41" r="3.2" fill="#9fd0ff"/>
+</svg>

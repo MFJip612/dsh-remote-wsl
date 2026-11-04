@@ -1,0 +1,8 @@
+# dsh-remote-wsl — connect a WSL project as a DSH workspace.
+# One Host row; the browser half ships through package.json "dsh.client".
+- insert:
+    - id: dsh-remote-wsl
+      name: dsh-remote-wsl
+      config:
+        terminal: true
+        tools: true

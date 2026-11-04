@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Package manager
+# npm is canonical (package-lock.json is committed); pnpm lockfiles are not used
+pnpm-lock.yaml
+pnpm-workspace.yaml
+
+# Test output
+test/results/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Backups and temp files
+*.bak
+*.tmp
+*.tsbuildinfo
