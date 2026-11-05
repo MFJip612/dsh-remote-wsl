@@ -2,34 +2,36 @@
  * Run with ELECTRON_RUN_AS_NODE=1 and the installed DeepSeek Harness executable.
  * The scripted adapter replaces only the network model; bash executes in real WSL.
  */
-const assert = require('node:assert/strict')
-const fs = require('node:fs')
-const path = require('node:path')
-const { pathToFileURL } = require('node:url')
+const assert: typeof import('node:assert/strict') = require('node:assert/strict')
+const fs: typeof import('node:fs') = require('node:fs')
+const path: typeof import('node:path') = require('node:path')
+const { pathToFileURL }: typeof import('node:url') = require('node:url')
+import type { DesktopAgent, DesktopContext, DesktopSession } from './desktop-contracts.js'
 
 async function main() {
+  const { contextModule, llmModule, scopeModule, defaultPlugin } = await import('./desktop-contracts.ts')
+  const { resolveConfig } = await import('../dist/config.js')
   const packages = path.join(path.dirname(process.execPath), 'resources', 'app.asar', 'dsh', 'node_modules', '@deepseek-ai')
   assert.ok(fs.existsSync(packages), 'Run this test with the installed DSH Desktop executable')
-  const load = async (name) => import(pathToFileURL(path.join(packages, name, 'lib', 'index.js')).href)
-  const { Context } = await load('cordis')
-  const llm = await load('dsh-llm')
-  const { default: SessionStore } = await load('dsh-session')
-  const { default: Projections } = await load('dsh-session-projection')
-  const { default: SystemPrompt } = await load('dsh-system-prompt')
-  const { default: Tools } = await load('dsh-tools')
+  const load = async (name: string): Promise<unknown> => import(pathToFileURL(path.join(packages, name, 'lib', 'index.js')).href)
+  const { Context } = contextModule(await load('cordis'))
+  const llm = llmModule(await load('dsh-llm'))
+  const SessionStore = defaultPlugin(await load('dsh-session'))
+  const Projections = defaultPlugin(await load('dsh-session-projection'))
+  const SystemPrompt = defaultPlugin(await load('dsh-system-prompt'))
+  const Tools = defaultPlugin(await load('dsh-tools'))
   const NativeExecutor = fs.existsSync(path.join(packages, 'dsh-tool-executor-native'))
     ? await load('dsh-tool-executor-native') : undefined
-  const { default: Agents } = await load('dsh-agent')
-  const { default: AgentLoop } = await load('dsh-agent-loop')
-  const { default: Subprocess } = await load('dsh-subprocess-local')
-  const { createScope, bindScopeParent } = await load('dsh-scope')
-  const { registerAgentTools } = await import('../lib/agent-tools.js')
-  const { createWslService } = await import('../lib/wsl-service.js')
-  const { createWorkspaceMappingStore } = await import('../lib/wsl-workspaces.js')
-  const requests = []
+  const Agents = defaultPlugin(await load('dsh-agent'))
+  const AgentLoop = defaultPlugin(await load('dsh-agent-loop'))
+  const Subprocess = defaultPlugin(await load('dsh-subprocess-local'))
+  const { createScope, bindScopeParent } = scopeModule(await load('dsh-scope'))
+  const WslPlugin = await import('../dist/index.js')
+  const { createWslService } = await import('../dist/lib/wsl-service.js')
+  const requests: { messages: unknown }[] = []
   class ScriptedAdapter extends llm.LlmAdapter {
-    async resolveModel(provider, model) { return { provider, id: model, name: model } }
-    async *stream(options) {
+    async resolveModel(provider: string, model: string) { return { provider, id: model, name: model } }
+    async *stream(options: { messages: unknown }) {
       requests.push(options)
       if (requests.length === 1) {
         const call = { type: 'tool-call', id: 'wsl-smoke-call', name: 'bash', arguments: JSON.stringify({ command: 'uname -s; pwd; printf DSH_WSL_RUNTIME_OK' }) }
@@ -62,35 +64,40 @@ async function main() {
     await ctx.plugin(Subprocess)
     ctx.llm.registerAdapter(['wsl-smoke'], new ScriptedAdapter())
     // The plugin only reads workingDirectory.get; real Agent Session supplies its cwd.
-    ctx.provide('workingDirectory', { get: (session) => session.header.cwd })
-    const config = { execTimeoutMs: 15000, maxReadBytes: 2000000 }
+    ctx.provide('workingDirectory', { get: (session: DesktopSession) => session.header.cwd })
+    const config = resolveConfig({ execTimeoutMs: 15000, maxReadBytes: 2000000 })
     const service = createWslService(ctx, config)
     const listed = await service.listDistros()
     assert.ok(listed.distros.length > 0, `Real WSL is required: ${listed.error ?? 'no distributions'}`)
-    const distro = listed.defaultDistro ?? listed.distros[0].name
+    const distro = listed.defaultDistro ?? Array.from<{ name: string }>(listed.distros)[0].name
     const identity = await service.resolveIdentity(distro)
     const origin = await service.toHostPath(distro, identity.home)
     const presetKey = {}
     const preset = createScope(ctx, presetKey)
-    let presetCtx
-    await preset.ctx.plugin({ name: 'test-preset-tools', inject: ['tools', 'agents'], apply(scope) {
+    let presetCtx: DesktopContext | undefined
+    await preset.ctx.plugin({ name: 'test-preset-tools', inject: ['tools', 'agents'], apply(scope: DesktopContext) {
       presetCtx = scope
       for (const name of ['read', 'write', 'edit', 'glob', 'grep', 'pwsh']) {
         scope.tools.register({
           name, description: 'Native preset tool that must be shadowed in WSL', parameters: { type: 'object', properties: {} },
-          output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+          output: { schema: { type: 'string' }, render: (_args: unknown, value: unknown) => [{ type: 'text', text: String(value) }] },
           execute: async () => { throw new Error('WSL did not shadow the preset tool') },
         })
       }
     } })
     assert.equal(ctx.tools.get('read'), undefined)
-    const off = registerAgentTools(ctx, { service, mappings: createWorkspaceMappingStore(config), config })
+    // Load the public plugin through real Desktop Cordis, including Config and the
+    // typed Host adapter. Routes are registered but no HTTP listener is opened.
+    ctx.provide('webServer', { register: () => () => {} })
+    ctx.provide('connection', { requestRejection: () => undefined })
+    const pluginFiber = await ctx.plugin(WslPlugin, { ...config, terminal: false })
+    assert.ok(presetCtx)
     const owned = await presetCtx.agents.create({ sessionId: 'wsl-runtime-smoke', agentOptions: { provider: 'wsl-smoke', model: 'scripted' }, meta: { cwd: origin.hostPath }, setup: (_scope, agent) => { bindScopeParent(agent, presetKey) } })
     const agent = owned.agent
     assert.equal(agent.inbox.nextStep[0].role, 'user')
     assert.equal(agent.inbox.nextStep[0].source.kind, 'plugin:dsh-remote-wsl')
     assert.ok(ctx.tools.get('bash', agent))
-    for (const name of ['read', 'write', 'edit', 'glob', 'grep']) assert.match(ctx.tools.get(name, agent).description, /WSL/u)
+    for (const name of ['read', 'write', 'edit', 'glob', 'grep']) assert.match(ctx.tools.get(name, agent)?.description ?? '', /WSL/u)
     assert.equal(ctx.tools.get('pwsh', agent), undefined)
     agent.followup(llm.createUserMessage({ content: [{ type: 'text', text: 'Run the WSL smoke command.' }], source: { kind: 'user' } }))
     await agent.whenIdle()
@@ -129,9 +136,9 @@ async function main() {
     await recovered.dispose()
     console.log('PASS legacy persisted string -> official inbox repair event -> completed conversation')
 
-    const fsp = require('node:fs/promises')
-    const os = require('node:os')
-    const zlib = require('node:zlib')
+    const fsp: typeof import('node:fs/promises') = require('node:fs/promises')
+    const os: typeof import('node:os') = require('node:os')
+    const zlib: typeof import('node:zlib') = require('node:zlib')
     const fixtureRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'dsh-wsl-disk-'))
     const diskCtx = new Context()
     try {
@@ -154,7 +161,7 @@ async function main() {
         const reader = await diskCtx.sessionPersistence.open(header.id, 'read')
         try { await reader.read() } finally { await reader.close() }
       }, /requires message objects/u)
-      const { repairLegacyInboxFile } = await import('../lib/legacy-inbox.js')
+      const { repairLegacyInboxFile } = await import('../dist/lib/legacy-inbox.js')
       const preview = await repairLegacyInboxFile(file, diskCtx.sessionPersistence)
       assert.equal(preview.repaired, 1)
       assert.deepEqual(await fsp.readFile(file), invalid)
@@ -163,19 +170,29 @@ async function main() {
       finally { await lease.release() }
       const repaired = await repairLegacyInboxFile(file, diskCtx.sessionPersistence, { apply: true })
       assert.equal(repaired.applied, true)
-      assert.deepEqual(await fsp.readFile(repaired.backupPath), invalid)
+      assert.deepEqual(await fsp.readFile(repaired.backupPath ?? assert.fail('Missing backup path')), invalid)
       const reader = await diskCtx.sessionPersistence.open(header.id, 'read')
       try {
         const read = await reader.read()
-        assert.equal(read.events[0].data.inserted[0].source.kind, 'plugin:dsh-remote-wsl')
+        assert.equal(read.events[0].type, 'agent/inbox/spliced')
+        const first = read.events[0]
+        assert.ok(first.type === 'agent/inbox/spliced')
+        assert.equal(first.data.inserted[0].source.kind, 'plugin:dsh-remote-wsl')
       } finally { await reader.close() }
       console.log('PASS real multi-frame Zstd disk refusal -> writer exclusion -> byte backup -> repair -> official disk reader')
+      const cli = (require('node:child_process') as typeof import('node:child_process')).spawnSync(process.execPath, [
+        path.resolve(__dirname, '../dist/scripts/repair-legacy.cjs'), `--root=${fixtureRoot}`,
+      ], { encoding: 'utf8', windowsHide: true, env: process.env, timeout: 15000 })
+      assert.equal(cli.status, 0, cli.stderr || String(cli.error ?? 'recovery CLI failed'))
+      assert.match(cli.stdout, /Affected sessions: 0; mode: dry-run/u)
+      assert.deepEqual(await fsp.readFile(repaired.backupPath ?? assert.fail('Missing backup path')), invalid)
+      console.log('PASS compiled recovery CLI -> installed Desktop modules -> explicit fixture root -> dry-run')
     } finally {
       await diskCtx.fiber.dispose()
       assert.equal(path.dirname(fixtureRoot), os.tmpdir())
       await fsp.rm(fixtureRoot, { recursive: true, force: true })
     }
-    off()
+    await pluginFiber.dispose()
   } finally {
     await ctx.fiber.dispose()
   }

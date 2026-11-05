@@ -1,3 +1,5 @@
+import { errorMessage } from '../contracts.js'
+import type { HostServices, PluginRuntime, SubprocessPort, TerminalSpec } from '../contracts.js'
 /**
  * Sidebar/agent terminal routing for WSL workspaces.
  *
@@ -11,7 +13,7 @@
  */
 import { windowsSystemDirectory } from './wsl-service.js'
 
-export function registerTerminalRouting(ctx, { service, mappings, config }) {
+export function registerTerminalRouting(ctx: Pick<HostServices, 'subprocess'>, { service, mappings, config }: PluginRuntime) {
   const subprocess = ctx.subprocess
   if (subprocess === undefined || typeof subprocess.spawnTerminal !== 'function') {
     console.warn('[dsh-remote-wsl] subprocess.spawnTerminal 不可用，终端保持原生行为')
@@ -20,7 +22,7 @@ export function registerTerminalRouting(ctx, { service, mappings, config }) {
   const original = subprocess.spawnTerminal
   let warned = false
 
-  const wrapped = async function spawnTerminalWithWsl(spec, ...rest) {
+  const wrapped = async function spawnTerminalWithWsl(this: SubprocessPort, spec: TerminalSpec, ...rest: unknown[]) {
     try {
       const cwd = typeof spec?.cwd === 'string' ? spec.cwd : ''
       const origin = cwd.length > 0 ? await mappings.resolveCwd(cwd) : undefined
@@ -37,7 +39,7 @@ export function registerTerminalRouting(ctx, { service, mappings, config }) {
     } catch (error) {
       if (!warned) {
         warned = true
-        console.warn(`[dsh-remote-wsl] 终端路由失败，本次回退原生终端：${error?.message ?? error}`)
+        console.warn(`[dsh-remote-wsl] 终端路由失败，本次回退原生终端：${errorMessage(error)}`)
       }
     }
     return await original.call(this, spec, ...rest)

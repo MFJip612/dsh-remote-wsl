@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "preserve",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["react", "react-dom"],
+    "strict": true,
+    "noEmitOnError": true,
+    "declaration": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "ignoreDeprecations": "6.0"
+  },
+  "files": ["src/client.ts", "types/client.d.ts"],
+  "exclude": ["node_modules", "client.js", "lib", "scripts", "test"]
+}

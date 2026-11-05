@@ -1,7 +1,8 @@
+import type { FileEventPort, FileSystemPort, FileIntegration, HostPath, Execution } from '../contracts.js'
 /** DSH owns change capture and observations; WSL owns atomic publication. */
-export function createFileIntegration(ctx, fs) {
+export function createFileIntegration(ctx: FileEventPort, fs: FileSystemPort): FileIntegration {
   return {
-    async prepare(kind, paths, exec) {
+    async prepare(kind: 'write' | 'edit', paths: HostPath, exec?: Execution) {
       exec?.signal?.throwIfAborted()
       const target = await fs.resolve(paths.hostPath, { signal: exec?.signal })
       const intent = await ctx.waterfall(`fs/${kind}-intent`, target, exec, () => undefined)
@@ -18,7 +19,7 @@ export function createFileIntegration(ctx, fs) {
         }
       }
     },
-    async observed(paths, exec) {
+    async observed(paths: HostPath, exec?: Execution) {
       const target = await fs.resolve(paths.hostPath, { signal: exec?.signal })
       const info = await fs.stat(target, exec?.signal)
       ctx.emit('fs/observed', target, info === undefined ? { kind: 'absent' } : { kind: 'present', version: info.version }, exec)

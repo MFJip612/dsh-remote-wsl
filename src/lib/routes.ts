@@ -1,3 +1,6 @@
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { errorCode, errorMessage } from '../contracts.js'
+import type { HostPort, PluginRuntime } from '../contracts.js'
 /**
  * HTTP routes consumed by the browser half.
  *
@@ -12,15 +15,15 @@ import { codedError } from './wsl-service.js'
 const PREFIX = '/dsh-remote-wsl'
 const MAX_BODY_BYTES = 64 * 1024
 
-function sendJson(res, status, payload) {
+function sendJson(res: ServerResponse, status: number, payload: unknown) {
   res.statusCode = status
   res.setHeader('content-type', 'application/json; charset=utf-8')
   res.setHeader('cache-control', 'no-store')
   res.end(JSON.stringify(payload))
 }
 
-function sendError(res, error) {
-  const code = typeof error?.code === 'string' ? error.code : 'internal-error'
+function sendError(res: ServerResponse, error: unknown) {
+  const code = typeof errorCode(error) === 'string' ? String(errorCode(error)) : 'internal-error'
   const status =
     code === 'invalid-request'
       ? 400
@@ -36,7 +39,7 @@ function sendError(res, error) {
   sendJson(res, status, { error: { code, message: error instanceof Error ? error.message : String(error) } })
 }
 
-function isLoopbackAddress(address) {
+function isLoopbackAddress(address: unknown) {
   const value = String(address ?? '')
   return (
     value === '127.0.0.1' ||
@@ -46,7 +49,7 @@ function isLoopbackAddress(address) {
   )
 }
 
-async function readJsonBody(req) {
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks = []
   let size = 0
   for await (const chunk of req) {
@@ -61,21 +64,21 @@ async function readJsonBody(req) {
   if (size === 0) return {}
   const text = Buffer.concat(chunks, size).toString('utf8')
   try {
-    const parsed = JSON.parse(text)
+    const parsed: unknown = JSON.parse(text)
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       throw new Error('body is not an object')
     }
-    return parsed
+    return parsed as Record<string, unknown>
   } catch {
     throw codedError('invalid-request', '请求体不是合法 JSON 对象')
   }
 }
 
-function urlOf(req) {
+function urlOf(req: IncomingMessage) {
   return new URL(String(req.url ?? PREFIX), 'http://localhost')
 }
 
-function requireString(value, field) {
+function requireString(value: unknown, field: string) {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw codedError('invalid-request', `缺少字段 ${field}`)
   }
@@ -85,8 +88,8 @@ function requireString(value, field) {
 /**
  * Register the `/dsh-remote-wsl` prefix route. Returns the disposer via `ctx.effect`.
  */
-export function registerRoutes(ctx, { service, mappings, config }) {
-  const handler = async (req, res) => {
+export function registerRoutes(ctx: Pick<HostPort, 'connection' | 'webServer' | 'get'>, { service, mappings, config }: PluginRuntime) {
+  const handler = async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const rejection = ctx.connection.requestRejection(req)
       if (rejection !== undefined) {
@@ -148,7 +151,7 @@ export function registerRoutes(ctx, { service, mappings, config }) {
         try {
           canonicalHostPath = await fsp.realpath(mapped.hostPath)
         } catch (error) {
-          throw codedError('directory-unreadable', `无法访问该文件夹：${error?.message ?? error}`)
+          throw codedError('directory-unreadable', `无法访问该文件夹：${errorMessage(error)}`)
         }
         const registry = ctx.get('workspaceRegistry')
         if (registry === undefined) {
@@ -158,7 +161,7 @@ export function registerRoutes(ctx, { service, mappings, config }) {
         try {
           workspace = await registry.create(canonicalHostPath)
         } catch (error) {
-          throw codedError('workspace-create-failed', `注册工作区失败：${error?.message ?? error}`)
+          throw codedError('workspace-create-failed', `注册工作区失败：${errorMessage(error)}`)
         }
         await mappings.remember({
           distro: entry.name,

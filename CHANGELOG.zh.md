@@ -4,6 +4,14 @@
 
 dsh-remote-wsl 的版本变更。功能说明见 [README.zh.md](README.zh.md)。
 
+## 0.1.3
+
+- Host 模块、浏览器插件和显式恢复 CLI 改用严格 TypeScript，按平台分别编译并生成原有 JavaScript 入口。
+- 增加 Cordis Standard Schema 配置导出、Host 类型声明、独立构建/类型检查命令及入口加载回归检查。
+- 保留 WSL agent 作用域、inbox 恢复、终端路由、文件观察、修改摘要、diff 与原生交付卡片行为。
+- 删除先前的 JavaScript 文件，测试与构建脚本也改用 TypeScript；运行产物和声明统一生成到被忽略的 `dist/`。Git 安装通过 `prepare` 构建，打包前自动生成发布产物。
+- 在已安装的 DSH Desktop 真实环境验证插件加载：桌面集成测试（由 `.cjs` 更名为 `.cts`，`test/desktop-runtime.cts` / `test/desktop-deliveries.cts`）经真实 Cordis 加载器、Agent 循环、工具注册、子进程服务与真实 WSL 执行全部通过。
+
 ## 0.1.2
 
 - WSL 的 `write` / `edit` 在发布文件前进入官方 `fs/write-intent` / `fs/edit-intent`，成功后记录 `fs/observed`，让 DSH 捕获修改前内容，并在回合结束时生成修改列表与比较。

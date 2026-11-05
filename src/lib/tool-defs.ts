@@ -1,3 +1,6 @@
+import { record } from '../contracts.js'
+import type { Execution, ToolDefinition, ToolDefinitionsInput, ToolOutput } from '../contracts.js'
+import type { ToolArgs } from './tool-wsl.js'
 /**
  * Tool definitions for one WSL session.
  *
@@ -13,11 +16,11 @@ import { createWslToolRuntime } from './tool-wsl.js'
 
 const TEXT_OUTPUT_SCHEMA = { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] }
 
-function textOutput(key) {
+function textOutput(key: string): ToolOutput {
   return {
     schema: TEXT_OUTPUT_SCHEMA,
-    render(_args, value) {
-      const text = typeof value?.[key] === 'string' ? value[key] : ''
+    render(_args: unknown, value: unknown) {
+      const text = typeof record(value)[key] === 'string' ? record(value)[key] : ''
       return [{ type: 'text', text }]
     },
   }
@@ -26,7 +29,9 @@ function textOutput(key) {
 const LINUX_PATH_NOTE =
   '这是一个 WSL 工作区：路径请使用 Linux 形式（例如 /home/me/project 或相对当前目录的路径），~ 表示发行版用户的 HOME。'
 
-const TOOL_SPECS = [
+type ToolName = 'bash' | 'read' | 'write' | 'edit' | 'glob' | 'grep'
+interface ToolSpec { name: ToolName; description: string; parameters: unknown; outputKey: string; run(runtime: ReturnType<typeof createWslToolRuntime>, args: ToolArgs): Promise<unknown> }
+const TOOL_SPECS: ToolSpec[] = [
   {
     name: 'bash',
     description:
@@ -140,9 +145,9 @@ const TOOL_SPECS = [
  * @param {(name: string) => boolean} input.hasTool whether a shipped tool with that name is visible
  * @returns {{ tools: object[], deny: string[] }}
  */
-export function createWslToolDefinitions(input) {
+export function createWslToolDefinitions(input: ToolDefinitionsInput) {
   const runtime = createWslToolRuntime(input)
-  const tools = []
+  const tools: ToolDefinition[] = []
   for (const spec of TOOL_SPECS) {
     // `bash` is new; the file/search tools shadow the shipped ones when present.
     if (spec.name !== 'bash' && input.hasTool(spec.name) !== true) continue
@@ -151,9 +156,10 @@ export function createWslToolDefinitions(input) {
       description: spec.description,
       parameters: spec.parameters,
       output: textOutput(spec.outputKey),
-      execute: async (args, exec) => await runtime[spec.name](args ?? {}, exec),
+      execute: async (args, exec) => await runtime[spec.name](record(args), exec),
     })
     if (spec.name === 'write' || spec.name === 'edit') {
+      const name = spec.name
       const native = input.getTool?.(spec.name)
       if (native?.output !== undefined) {
         const definition = tools[tools.length - 1]
@@ -161,9 +167,9 @@ export function createWslToolDefinitions(input) {
         definition.presentCall = native.presentCall
         definition.presentResult = native.presentResult
         definition.execute = async (args, exec) => {
-          const value = await runtime[spec.name](args ?? {}, exec)
-          const result = { path: value.hostPath, before: value.before, after: value.after }
-          if (spec.name === 'write') result.operation = value.operation
+          const value = await runtime[name](record(args), exec)
+          const result: { path: string; before: string | null; after: unknown; operation?: string } = { path: value.hostPath, before: value.before, after: value.after }
+          if ('operation' in value) result.operation = value.operation
           return result
         }
       }
@@ -174,14 +180,17 @@ export function createWslToolDefinitions(input) {
     tools.push({
       ...nativePresent,
       description: nativePresent.description + ' WSL paths may be Linux absolute, relative, or ~/ paths.',
-      async execute(args, exec) {
-        const files = []
-        for (const file of args.files) {
+      async execute(args: unknown, exec?: Execution) {
+        const presentArgs = record(args)
+        if (!Array.isArray(presentArgs.files)) throw new TypeError('files must be an array')
+        const files: Record<string, unknown>[] = []
+        for (const value of presentArgs.files) {
+          const file = record(value)
           const mapped = await runtime.resolve(file.path)
           files.push({ ...file, path: mapped.hostPath })
         }
         // 保留官方 executor 的限额、文件校验及 tools/result → deliverables/presented 链路。
-        return nativePresent.execute({ ...args, files }, exec)
+        return nativePresent.execute({ ...presentArgs, files }, exec)
       },
     })
   }

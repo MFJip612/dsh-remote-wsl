@@ -1,3 +1,4 @@
+import type { HostPath } from '../contracts.js'
 /**
  * Pure path helpers for mapping between WSL Linux paths, Windows drive paths and WSL UNC paths.
  *
@@ -23,7 +24,7 @@ const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 /** Characters Windows/WSL refuse in a distro name (same set as Windows file names). */
 const DISTRO_NAME_FORBIDDEN_PATTERN = /[/\\:*?"<>|]/;
 
-function invalidPathError(reason) {
+function invalidPathError(reason: string) {
   return Object.assign(new Error(`invalid Linux path: ${reason}`), { code: "invalid-path" });
 }
 
@@ -37,7 +38,7 @@ function invalidPathError(reason) {
  * @param {unknown} input
  * @returns {string|null}
  */
-function normalizeLinuxPathOrNull(input) {
+function normalizeLinuxPathOrNull(input: unknown) {
   if (typeof input !== "string" || input.length === 0) {
     return null;
   }
@@ -70,7 +71,7 @@ function normalizeLinuxPathOrNull(input) {
  * @returns {string} e.g. `/a/../b` -> `/b`, `''` -> throws
  * @throws {Error & {code: "invalid-path"}} for empty, non-string or control-character input
  */
-export function normalizeLinuxPath(input) {
+export function normalizeLinuxPath(input: unknown) {
   if (typeof input === "string" && input.length === 0) {
     throw invalidPathError("empty");
   }
@@ -91,7 +92,7 @@ export function normalizeLinuxPath(input) {
  * @param {string} relative
  * @returns {string}
  */
-export function joinLinux(base, relative) {
+export function joinLinux(base: string, relative: string) {
   return posix.join(base, relative);
 }
 
@@ -103,7 +104,7 @@ export function joinLinux(base, relative) {
  * @param {string} home absolute home directory, e.g. `/home/mingfai`
  * @returns {string}
  */
-export function expandTilde(linuxPath, home) {
+export function expandTilde(linuxPath: string, home: string) {
   if (typeof linuxPath !== "string" || typeof home !== "string") {
     return linuxPath;
   }
@@ -121,7 +122,7 @@ export function expandTilde(linuxPath, home) {
  * @param {string} path
  * @returns {boolean} true when the path is rooted (`/...`)
  */
-export function isAbsoluteLinuxPath(path) {
+export function isAbsoluteLinuxPath(path: unknown) {
   return typeof path === "string" && path.startsWith("/");
 }
 
@@ -135,7 +136,7 @@ export function isAbsoluteLinuxPath(path) {
  * @param {string} name
  * @returns {boolean}
  */
-export function isValidDistroName(name) {
+export function isValidDistroName(name: unknown) {
   if (typeof name !== "string") {
     return false;
   }
@@ -161,7 +162,7 @@ export function isValidDistroName(name) {
  * @param {string} user
  * @returns {boolean}
  */
-export function isValidWslUser(user) {
+export function isValidWslUser(user: unknown) {
   if (typeof user !== "string") {
     return false;
   }
@@ -186,7 +187,7 @@ const WSL_HOST_PATH_PATTERN = /^\\\\(wsl\.localhost|wsl\$)\\([^\\/]+)(?:\\([\s\S
  * @param {string} hostPath e.g. `\\wsl.localhost\Ubuntu\home\mingfai`
  * @returns {{distro: string, linuxPath: string}|undefined}
  */
-export function parseWslHostPath(hostPath) {
+export function parseWslHostPath(hostPath: unknown) {
   if (typeof hostPath !== "string" || hostPath.length === 0) {
     return undefined;
   }
@@ -215,7 +216,7 @@ export function parseWslHostPath(hostPath) {
  * @param {string} distro
  * @returns {[string, string]} `['\\\\wsl.localhost\\<distro>\\<seg>', '\\\\wsl$\\<distro>\\<seg>']`
  */
-export function uncCandidates(linuxPath, distro) {
+export function uncCandidates(linuxPath: unknown, distro: string): [string, string] {
   const segments = String(linuxPath ?? "")
     .replaceAll("\\", "/")
     .split("/")
@@ -230,7 +231,7 @@ export function uncCandidates(linuxPath, distro) {
  * @param {unknown} mountRoot
  * @returns {string}
  */
-function normalizeMountRoot(mountRoot) {
+function normalizeMountRoot(mountRoot: unknown) {
   if (typeof mountRoot !== "string" || mountRoot.length === 0) {
     return DEFAULT_MOUNT_ROOT;
   }
@@ -249,7 +250,7 @@ function normalizeMountRoot(mountRoot) {
  * @param {string} mountRoot normalized mount root
  * @returns {string|null} e.g. `/mnt/e/source` -> `E:\source`, `/mnt/e` -> `E:\`; `null` when not mounted
  */
-function linuxPathToDrivePath(linuxPath, mountRoot) {
+function linuxPathToDrivePath(linuxPath: string, mountRoot: string) {
   const prefix = mountRoot === "/" ? "" : mountRoot;
   if (prefix !== "" && linuxPath !== prefix && !linuxPath.startsWith(`${prefix}/`)) {
     return null;
@@ -282,7 +283,7 @@ function linuxPathToDrivePath(linuxPath, mountRoot) {
  * @returns {{linuxPath: string, hostPath: string, mapped: "windows"|"unc"}}
  * @throws {Error & {code: "invalid-path"}} when `linuxPath` is invalid
  */
-export function linuxToHostPath(linuxPath, distro, options = {}) {
+export function linuxToHostPath(linuxPath: string, distro: string, options: { mountRoot?: string; uncHost?: string } = {}): HostPath {
   const normalized = normalizeLinuxPath(linuxPath);
   const mountRoot = normalizeMountRoot(options?.mountRoot);
   const uncHost =
@@ -314,7 +315,7 @@ const DRIVE_PATH_PATTERN = /^([A-Za-z]):(?:[\\/](.*))?$/;
  * @param {{mountRoot?: string}} [options]
  * @returns {{linuxPath: string}|undefined} `undefined` when this is not a drive path
  */
-export function drivePathToLinux(hostPath, options = {}) {
+export function drivePathToLinux(hostPath: unknown, options: { mountRoot?: string } = {}) {
   if (typeof hostPath !== "string") {
     return undefined;
   }
@@ -339,7 +340,7 @@ export function drivePathToLinux(hostPath, options = {}) {
  * @param {{mountRoot?: string}} [options]
  * @returns {{linuxPath: string, distro?: string}|undefined}
  */
-export function hostPathToLinuxPath(hostPath, options = {}) {
+export function hostPathToLinuxPath(hostPath: unknown, options: { mountRoot?: string } = {}) {
   const parsed = parseWslHostPath(hostPath);
   if (parsed !== undefined) {
     return { linuxPath: parsed.linuxPath, distro: parsed.distro };
@@ -360,7 +361,7 @@ export function hostPathToLinuxPath(hostPath, options = {}) {
  * @param {string} linuxPath
  * @returns {string}
  */
-export function parentLinuxPath(linuxPath) {
+export function parentLinuxPath(linuxPath: unknown) {
   const normalized = normalizeLinuxPathOrNull(linuxPath) ?? "/";
   if (normalized === "/") {
     return "/";
@@ -377,7 +378,7 @@ export function parentLinuxPath(linuxPath) {
  * @param {string} distro
  * @returns {{name: string, path: string}[]} e.g. `/home/mingfai` -> distro, home, mingfai
  */
-export function linuxCrumbs(linuxPath, distro) {
+export function linuxCrumbs(linuxPath: unknown, distro: string) {
   /** @type {{name: string, path: string}[]} */
   const crumbs = [{ name: typeof distro === "string" ? distro : "", path: "/" }];
   const normalized = normalizeLinuxPathOrNull(linuxPath);
@@ -399,7 +400,7 @@ export function linuxCrumbs(linuxPath, distro) {
  * @param {string} name
  * @returns {boolean}
  */
-export function hiddenByRule(name) {
+export function hiddenByRule(name: unknown) {
   return typeof name === "string" && name.startsWith(".");
 }
 
@@ -410,7 +411,7 @@ export function hiddenByRule(name) {
  * @param {string} path
  * @returns {string}
  */
-export function hostPathKey(path) {
+export function hostPathKey(path: unknown) {
   if (typeof path !== "string" || path.length === 0) {
     return "";
   }
@@ -430,7 +431,7 @@ export function hostPathKey(path) {
  * @param {string} child
  * @returns {boolean}
  */
-export function isPathInsideHost(parent, child) {
+export function isPathInsideHost(parent: unknown, child: unknown) {
   if (typeof parent !== "string" || typeof child !== "string") {
     return false;
   }
@@ -452,7 +453,7 @@ export function isPathInsideHost(parent, child) {
  * @param {string} path
  * @returns {boolean} true only for drive paths (`E:\...` / `E:/...`), never for UNC paths
  */
-export function isWindowsDrivePath(path) {
+export function isWindowsDrivePath(path: unknown) {
   return typeof path === "string" && /^[A-Za-z]:[\\/]/.test(path);
 }
 
@@ -462,7 +463,7 @@ export function isWindowsDrivePath(path) {
  * @param {string} value
  * @returns {string}
  */
-function stripInlineComment(value) {
+function stripInlineComment(value: string) {
   const commentMatch = /\s[#;]/.exec(value);
   const withoutComment = commentMatch ? value.slice(0, commentMatch.index) : value;
   const trimmed = withoutComment.trim();
@@ -484,14 +485,14 @@ function stripInlineComment(value) {
  * @param {string} text
  * @returns {Map<string, Map<string, string>>}
  */
-function parseIniSections(text) {
+function parseIniSections(text: unknown) {
   /** @type {Map<string, Map<string, string>>} */
-  const sections = new Map();
+  const sections = new Map<string, Map<string, string>>();
   if (typeof text !== "string" || text.length === 0) {
     return sections;
   }
 
-  let currentSection = null;
+  let currentSection: string | null = null;
   for (const rawLine of text.replace(/^\uFEFF/, "").split(/\r\n|\n|\r/)) {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#") || line.startsWith(";")) {
@@ -518,7 +519,7 @@ function parseIniSections(text) {
     if (key === "") {
       continue;
     }
-    sections.get(currentSection).set(key, stripInlineComment(line.slice(separatorIndex + 1)));
+    sections.get(currentSection)!.set(key, stripInlineComment(line.slice(separatorIndex + 1)));
   }
 
   return sections;
@@ -531,7 +532,7 @@ function parseIniSections(text) {
  * @param {string} text /etc/wsl.conf contents
  * @returns {string}
  */
-export function mountRootFromWslConf(text) {
+export function mountRootFromWslConf(text: unknown) {
   const root = (parseIniSections(text).get("automount")?.get("root") ?? "").trim();
   return root.length > 0 ? root : DEFAULT_MOUNT_ROOT;
 }
@@ -542,7 +543,7 @@ export function mountRootFromWslConf(text) {
  * @param {string} text /etc/wsl.conf contents
  * @returns {string|null} trimmed user name, or null when not configured
  */
-export function defaultUserFromWslConf(text) {
+export function defaultUserFromWslConf(text: unknown) {
   const user = (parseIniSections(text).get("user")?.get("default") ?? "").trim();
   return user.length > 0 ? user : null;
 }
@@ -554,7 +555,7 @@ export function defaultUserFromWslConf(text) {
  * @param {string} user exact user name
  * @returns {string|null} home directory, or null when the user is absent/unparseable
  */
-export function homeFromPasswd(passwdText, user) {
+export function homeFromPasswd(passwdText: unknown, user: unknown) {
   if (typeof passwdText !== "string" || typeof user !== "string" || user.length === 0) {
     return null;
   }

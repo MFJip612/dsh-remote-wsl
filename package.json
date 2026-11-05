@@ -1,10 +1,14 @@
 {
   "id": "dsh-remote-wsl",
   "name": "dsh-remote-wsl",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
-  "description": "",
+  "description": "Connect WSL projects to DeepSeek Harness with Linux tools, terminals and native file deliveries.",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=24.9.0"
+  },
   "repository": "https://github.com/MFJip612/dsh-remote-wsl",
   "author": {
     "name": "MFJip612",
@@ -12,29 +16,31 @@
     "avatar": "https://avatars.githubusercontent.com/u/103869422?v=4"
   },
   "exports": {
-    ".": "./index.js",
-    "./client": "./client.js",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": "./dist/client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
-    "index.js",
-    "client.js",
-    "lib/*.js",
-    "scripts/repair-legacy.cjs",
+    "dist/",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
     "README.md"
   ],
   "scripts": {
-    "build": "npm run build:host && npm run build:client && npm run build:cjs",
+    "build": "node scripts/build.ts",
     "build:host": "tsc -p tsconfig.host.json",
     "build:client": "tsc -p tsconfig.client.json",
     "build:cjs": "tsc -p tsconfig.cjs.json",
-    "test": "npm run build && node test/pure.test.js && node test/run.js && node test/tools.test.js && node test/registration.test.js",
+    "test": "node scripts/build.ts --check && node --test test/build.test.ts && node test/client.test.ts && node test/pure.test.ts && node test/run.ts && node test/tools.test.ts && node test/registration.test.ts",
     "test:all": "npm test",
-    "check": "npm run build"
+    "check": "node scripts/build.ts --check",
+    "prepare": "node scripts/build.ts",
+    "prepack": "node scripts/build.ts"
   },
   "dsh": {
     "bundle": {
@@ -64,7 +70,11 @@
   "source": "manual-submission",
   "dshManifest": "bundle",
   "topics": [],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.5 <5"
+  },
   "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

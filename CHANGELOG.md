@@ -4,6 +4,14 @@ English | [简体中文](CHANGELOG.zh.md)
 
 Version history for dsh-remote-wsl. Feature documentation lives in [README.md](README.md).
 
+## 0.1.3
+
+- Rewrote Host modules, the browser plugin, and the explicit recovery CLI in strict TypeScript, with separate platform compiler targets and generated JavaScript entry points.
+- Added the Cordis Standard Schema configuration export, Host declarations, portable build/typecheck scripts, and packaging/loader regression checks.
+- Preserved existing WSL agent isolation, inbox recovery, terminal routing, filesystem observations, change summaries, diffs, and native delivery cards.
+- Removed previous JavaScript sources, migrated tests/build scripts to TypeScript, and moved generated runtime files/declarations into ignored `dist/`. Git installs build through `prepare`; packaging builds the distributable artifacts.
+- Verified loading in the installed DSH Desktop real environment: the desktop integration tests (renamed from `.cjs` to `.cts`, `test/desktop-runtime.cts` / `test/desktop-deliveries.cts`) run the plugin through the real Cordis loader, agent loop, tool registration, subprocess services, and real WSL execution.
+
 ## 0.1.2
 
 - WSL `write` / `edit` now enter the official `fs/write-intent` / `fs/edit-intent` before publishing and record `fs/observed` afterwards, so DSH captures pre-edit content and produces the modified-file list and comparison at turn end.

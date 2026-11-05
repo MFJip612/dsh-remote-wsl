@@ -27,7 +27,7 @@
 **4. 登记为工作区。**
 
 - Linux 文件系统里的项目登记为 `\\wsl.localhost\<发行版>\<路径>`（自动探测 `\\wsl$` 备用形态）。
-- `/mnt/<盘符>/...` 下的项目登记为真实的 Windows 路径（例如 `E:\source\proj`）——WSL 的 9P 共享拒绝访问 `/mnt`，只有真实盘符路径可读写；插件会记住它来自哪个发行版。
+- `/mnt/<盘符>/...` 下的项目登记为真实的 Windows 路径（例如 `D:\work\proj`）——WSL 的 9P 共享拒绝访问 `/mnt`，只有真实盘符路径可读写；插件会记住它来自哪个发行版。
 - 之后在新会话里，工作区就是普通的 DSH 工作区；区别只在执行面。
 
 **5. 终端在发行版里。** 在这个工作区打开侧栏终端，实际执行的是
@@ -50,6 +50,8 @@ Windows 的 PowerShell 工具在 WSL 工作区里会被隐藏，普通 Windows �
 ```powershell
 dsh plugin --profile web add github:MFJip612/dsh-remote-wsl
 ```
+
+仓库只保存 TypeScript 源码，安装本地目录前请运行 `npm ci`（自动构建）或 `npm run build`。GitHub 安装通过 `prepare` 构建；如果 pnpm 阻止构建脚本，按安装器提示在对应 profile 的 `pnpm-workspace.yaml` 中允许它报告的准确包键，然后重试。也可先运行 `npm pack`，安装已包含构建产物的 tarball。
 
 也可以在会话里让 agent 用插件管理器安装该目录。`link:` 只保证读取本目录的文件，不保证已经运行的 Host 重载代码。**默认配置下，Host 侧代码更新后需要完全退出并重启 DSH**；浏览器侧代码更新后刷新页面即可。DSH 的默认 HMR 配置是 `root: []`，只监听配置文件。如果退出提示有任务正在运行，请先等任务完成再重启。
 
@@ -107,22 +109,42 @@ WSL 的 `write` / `edit` 在发布文件前进入官方 `fs/write-intent` / `fs/
 - 文件树、代码预览、变更记录等仍由 DSH 在 Windows 侧通过 9P 共享读取，目录很大时会比原生 Linux 慢。
 - 发行版第一次被访问时会自动启动（可能等待数秒）。
 
+## TypeScript 开发
+
+维护源码位于 `src/`。Host 入口、WSL 服务与工具为 TypeScript ESM；浏览器源码是 `src/client.ts`，编译后仍通过 DSH 的模块加载器使用宿主 React；恢复 CLI 为 `src/scripts/repair-legacy.cts`。
+
+```powershell
+npm ci
+npm run check # 构建插件，再严格检查 TypeScript 测试与构建脚本
+npm run build # 生成 DSH 可直接加载的 JavaScript 和 Host 类型声明
+npm test      # 构建、入口/配置检查及现有行为回归
+npm pack      # 打包前自动构建
+```
+
+要求 Node.js >= 24.9.0。业务源码、构建脚本和测试全部使用 TypeScript；先前根目录与 `lib/` 下的 JavaScript 文件已删除。所有 JavaScript 和 Host 声明只生成到 Git 忽略的 `dist/`，不提交生成产物。`package.json` 的公开入口指向 `dist/`，打包前自动构建，安装包只携带运行所需的编译产物和静态资源。构建不依赖旁边的 DSH 源码仓库。
+
+恢复 CLI 的源码是 `src/scripts/repair-legacy.cts`，运行入口是构建后的 `dist/scripts/repair-legacy.cjs`；它仍默认只报告，只有显式 `--apply` 才修改日志。
+
+插件导出 Cordis 支持的 Standard Schema `Config`，保留原有配置字段、默认值和输入归一化。开发类型依赖使用与验证用 Desktop 相同的 Cordis 4.0.5；Host 与浏览器运行时均使用 DSH 提供的服务实例。
+
+本地链接安装后，源码修改需要先构建；Host 更新仍需完全退出并重启 DSH，浏览器更新后刷新页面。`npm test` 中真实 WSL 部分在 WSL 不可用时会跳过；下面两个 Desktop 集成测试要求真实 WSL，缺少环境时失败。
+
 ## 测试
 
 ```powershell
 $env:ELECTRON_RUN_AS_NODE='1'
 $exe = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\DeepSeek Harness.exe"
-& $exe test\pure.test.js         # 纯函数（发行版解析、路径映射、wsl.conf/passwd）
-& $exe test\run.js               # Host 服务 + 真实 WSL（身份、目录、bash）
-& $exe test\tools.test.js        # 工具运行时 + 真实 WSL（write/read/edit/glob/grep/bash/沙箱门禁）
-& $exe test\registration.test.js # 注册层（agent 作用域工具集、终端路由包装）
-& $exe test\desktop-runtime.cjs | Out-String # 已安装 DSH 的真实 Agent/工具执行链 + 真实 WSL；无模型费用
-& $exe test\desktop-deliveries.cjs | Out-String # 真实文件变更摘要、diff、present 交付事件；独立 WSL 测试目录
+& $exe test\pure.test.ts         # 纯函数（发行版解析、路径映射、wsl.conf/passwd）
+& $exe test\run.ts               # Host 服务 + 真实 WSL（身份、目录、bash）
+& $exe test\tools.test.ts        # 工具运行时 + 真实 WSL（write/read/edit/glob/grep/bash/沙箱门禁）
+& $exe test\registration.test.ts # 注册层（agent 作用域工具集、终端路由包装）
+& $exe test\desktop-runtime.cts | Out-String # 已安装 DSH 的真实 Agent/工具执行链 + 真实 WSL；无模型费用
+& $exe test\desktop-deliveries.cts | Out-String # 真实文件变更摘要、diff、present 交付事件；独立 WSL 测试目录
 ```
 
 没有 `node.exe` 在 PATH 上时用 DSH Desktop 自带的 Electron 以 Node 模式运行（如上）。真实 WSL 不可用时相应小节显示 skipped。
 
-`test/desktop-runtime.cjs` 必须通过已安装的 DSH Desktop 可执行文件运行，要求可访问 WSL，缺少环境时失败而不跳过。测试替换模型网络响应，保留 DSH 的真实 Cordis、Agent 循环、inbox、工具注册、工具执行和 subprocess 服务，覆盖新会话完成对话、内存 inbox 恢复，以及多帧 Zstd 磁盘损坏拒绝、写锁互斥、备份、修复后官方读取。对话在内存中创建，在 Linux HOME 执行只读命令；磁盘测试只使用临时目录，不改变桌面端会话和用户项目。
+`test/desktop-runtime.cts` 必须通过已安装的 DSH Desktop 可执行文件运行，要求可访问 WSL，缺少环境时失败而不跳过。测试替换模型网络响应，保留 DSH 的真实 Cordis、Agent 循环、inbox、工具注册、工具执行和 subprocess 服务，覆盖新会话完成对话、内存 inbox 恢复，以及多帧 Zstd 磁盘损坏拒绝、写锁互斥、备份、修复后官方读取。对话在内存中创建，在 Linux HOME 执行只读命令；磁盘测试只使用临时目录，不改变桌面端会话和用户项目。
 
 ## 更新日志
 

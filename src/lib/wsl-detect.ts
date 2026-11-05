@@ -1,3 +1,5 @@
+import { record } from '../contracts.js'
+import type { Distro } from '../contracts.js'
 /**
  * WSL discovery primitives: decode `wsl.exe` output, parse `wsl.exe -l -v --all`, and a small
  * injectable discovery cache.
@@ -12,6 +14,9 @@
  * `wsl.exe --status` on some builds, or Linux test fixtures).
  */
 
+type CacheEntry<T> = { expiresAt: number; promise: Promise<T> }
+type CacheHolder<T> = { entry: CacheEntry<T> | null }
+
 export const WSL_DISCOVERY_CACHE_TTL_MS = 5000;
 
 /**
@@ -21,7 +26,7 @@ export const WSL_DISCOVERY_CACHE_TTL_MS = 5000;
  * @param {Buffer|Uint8Array|null|undefined} buffer raw bytes; `null`/`undefined` mean "no output"
  * @returns {string} decoded text ('' for empty output)
  */
-export function decodeWslOutput(buffer) {
+export function decodeWslOutput(buffer: unknown) {
   if (buffer === null || buffer === undefined) {
     return "";
   }
@@ -57,7 +62,7 @@ export function decodeWslOutput(buffer) {
  * @param {string} raw decoded text
  * @returns {string}
  */
-export function normalizeWslOutput(raw) {
+export function normalizeWslOutput(raw: unknown) {
   if (typeof raw !== "string") {
     return "";
   }
@@ -78,17 +83,17 @@ export function normalizeWslOutput(raw) {
  * @param {Buffer|Uint8Array|null} stderr captured stderr
  * @returns {Error & {exitCode?: number}}
  */
-export function createWslExecError(error, stdout, stderr) {
+export function createWslExecError(error: unknown, stdout: unknown, stderr: unknown) {
   const detail =
     normalizeWslOutput(decodeWslOutput(stderr)).trim() ||
     normalizeWslOutput(decodeWslOutput(stdout)).trim() ||
     (error instanceof Error
-      ? error.message
-      : typeof error?.message === "string"
-        ? error.message
+      ? String(record(error).message)
+      : typeof record(error).message === "string"
+        ? String(record(error).message)
         : String(error));
 
-  const exitCode = typeof error?.code === "number" ? error.code : undefined;
+  const exitCode = typeof record(error).code === "number" ? record(error).code as number : undefined;
   return Object.assign(
     new Error(exitCode === undefined ? detail : `${detail}（退出码 ${exitCode}）`, {
       cause: error,
@@ -108,14 +113,14 @@ export function createWslExecError(error, stdout, stderr) {
  * @param {string} rawOutput raw or pre-normalized output
  * @returns {{name: string, isDefault: boolean, state: string, version: 1|2|null}[]}
  */
-export function parseWSLDistroList(rawOutput) {
+export function parseWSLDistroList(rawOutput: unknown) {
   const lines = normalizeWslOutput(rawOutput)
     .split("\n")
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0);
 
   /** @type {{name: string, isDefault: boolean, state: string, version: 1|2|null}[]} */
-  const distros = [];
+  const distros: Distro[] = [];
   for (const line of lines) {
     const parts = line
       .trim()
@@ -173,45 +178,43 @@ export function createWslDiscovery({
   exec,
   ttlMs = WSL_DISCOVERY_CACHE_TTL_MS,
   now = () => Date.now(),
-} = {}) {
+}: { exec?: (args: string[]) => Promise<unknown>; ttlMs?: number; now?: () => number } = {}) {
   if (typeof exec !== "function") {
     throw new TypeError("createWslDiscovery requires an exec(args) function");
   }
 
-  // Each holder is a mutable box so the cached entry can be evicted from inside the loader.
-  const distroListHolder = { entry: null };
-  const availabilityHolder = { entry: null };
+  const execute = exec
 
-  function getCached(holder, load) {
+  // Each holder is a mutable box so the cached entry can be evicted from inside the loader.
+  const distroListHolder: CacheHolder<Distro[]> = { entry: null };
+  const availabilityHolder: CacheHolder<boolean> = { entry: null };
+
+  function getCached<T>(holder: CacheHolder<T>, load: () => Promise<T>) {
     const cached = holder.entry;
     if (cached !== null && cached.expiresAt > now()) {
       return cached.promise;
     }
 
-    /** @type {{expiresAt: number, promise: Promise<unknown>}} */
-    const entry = { expiresAt: now() + ttlMs, promise: undefined };
-    entry.promise = (async () => {
-      try {
-        return await load();
-      } catch (error) {
+    const expiresAt = now() + ttlMs;
+    const pending = (async () => await load())();
+    const promise: Promise<T> = pending.catch(error => {
         // A temporary wsl.exe failure must not be pinned for the whole TTL: evict before the
         // rejection escapes so the next explicit retry really executes again.
-        if (holder.entry === entry) {
+        if (holder.entry?.promise === promise) {
           holder.entry = null;
         }
         throw error;
-      }
-    })();
-    holder.entry = entry;
+    });
+    holder.entry = { expiresAt, promise };
     // Parity with the reference implementation: callers that fire-and-forget a probe do not turn
     // a transient failure into an unhandled rejection crash.
-    void entry.promise.catch(() => {});
-    return entry.promise;
+    void promise.catch(() => {});
+    return promise;
   }
 
   function listDistros() {
     return getCached(distroListHolder, async () => {
-      const output = await exec(["-l", "-v", "--all"]);
+      const output = await execute(["-l", "-v", "--all"]);
       return parseWSLDistroList(decodeWslOutput(output));
     });
   }
@@ -219,12 +222,12 @@ export function createWslDiscovery({
   function isAvailable() {
     return getCached(availabilityHolder, async () => {
       try {
-        await exec(["--status"]);
+        await execute(["--status"]);
         return true;
       } catch (error) {
         // wsl.exe missing entirely means WSL is unavailable; any other failure (e.g. no distro
         // installed) still means the WSL CLI exists. Ported from wsl-detect.ts:176-184.
-        const message = error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? String(record(error).message) : String(error);
         return !/not recognized|enoent/i.test(message);
       }
     });

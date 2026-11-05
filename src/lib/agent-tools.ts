@@ -1,3 +1,5 @@
+import { errorMessage, fileEventPort, isRecord, record } from '../contracts.js'
+import type { Agent, AgentScope, HostPort, Message, PluginRuntime, WslOrigin } from '../contracts.js'
 /**
  * Per-agent WSL tool set.
  *
@@ -15,12 +17,12 @@ import { randomUUID } from 'node:crypto'
 import { createWslToolDefinitions } from './tool-defs.js'
 import { createFileIntegration } from './file-integration.js'
 
-const pathsNote = (distro, linuxPath) =>
+const pathsNote = (distro: string, linuxPath: string) =>
   `本会话的目录在 WSL 发行版 ${distro} 内：${linuxPath}。shell 是 Linux bash，路径请使用 Linux 形式；` +
   `Windows 盘在 /mnt/<盘符>。请用 bash 工具执行命令，不要使用 PowerShell。`
 
-function installPathsNote(agent, origin) {
-  const message = {
+function installPathsNote(agent: Agent, origin: WslOrigin) {
+  const message: Message = {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text: pathsNote(origin.distro, origin.linuxPath) }],
@@ -30,24 +32,24 @@ function installPathsNote(agent, origin) {
   // 0.1.0 把裸字符串持久化进 inbox，导致客户端投影和首轮请求无法读取消息字段。
   // 通过官方 splice 追加修复事件，保留历史及其它待处理输入，不改写会话文件。
   if (agent.inbox !== undefined) {
-    for (const [target, entries] of [['next-step', agent.inbox.nextStep], ['next-turn', agent.inbox.nextTurn]]) {
+    for (const [target, entries] of [['next-step', agent.inbox.nextStep], ['next-turn', agent.inbox.nextTurn]] as const) {
       for (let index = entries.length - 1; index >= 0; index -= 1) {
         const entry = entries[index]
         if (typeof entry === 'string' && entry.startsWith('本会话的目录在 WSL 发行版 ')
           && entry.endsWith('请用 bash 工具执行命令，不要使用 PowerShell。')) {
           agent.inbox.splice(target, index, 1, installed ? [] : [message])
           installed = true
-        } else if (entry?.source?.kind === 'plugin:dsh-remote-wsl') {
+        } else if (record(record(entry).source).kind === 'plugin:dsh-remote-wsl') {
           installed = true
         }
       }
     }
   }
-  if (!installed) agent.inject(message)
+  if (!installed) agent.inject?.(message)
 }
 
-function scopeToolLookup(scope, agent) {
-  return (name) => {
+function scopeToolLookup(scope: AgentScope, agent: Agent) {
+  return (name: string) => {
     try {
       // 预设中的文件工具属于父作用域，省略 agent 只会查询全局工具，无法遮蔽它们。
       return scope.tools?.get?.(name, agent) !== undefined
@@ -58,18 +60,19 @@ function scopeToolLookup(scope, agent) {
 }
 
 /** A value is usable as the agent scope when it can own effects and registrations. */
-function looksLikeScope(candidate) {
+function looksLikeScope(candidate: unknown): candidate is AgentScope {
   return (
-    candidate !== undefined &&
+    isRecord(candidate) &&
     candidate !== null &&
     typeof candidate === 'object' &&
     typeof candidate.effect === 'function' &&
-    candidate.tools !== undefined &&
-    candidate.tools !== null
+    isRecord(candidate.tools) &&
+    typeof candidate.tools.get === 'function' &&
+    typeof candidate.tools.register === 'function'
   )
 }
 
-export function registerAgentTools(ctx, { service, mappings, config }) {
+export function registerAgentTools(ctx: Pick<HostPort, 'sessions' | 'workingDirectory' | 'get' | 'on'>, { service, mappings, config }: PluginRuntime) {
   const sessions = ctx.sessions
   const workingDirectory = ctx.workingDirectory
   const sandboxPolicy = ctx.get?.('sandboxPolicy')
@@ -93,8 +96,9 @@ export function registerAgentTools(ctx, { service, mappings, config }) {
         return
       }
       const hasTool = scopeToolLookup(scope, agent)
-      const getTool = name => scope.tools.get(name, agent)
+      const getTool = (name: string) => scope.tools.get(name, agent)
       const identity = await service.resolveIdentity(origin.distro).catch(() => null)
+      const filesystem = ctx.get?.('fs')
       const definitions = createWslToolDefinitions({
         service,
         mappings,
@@ -105,11 +109,11 @@ export function registerAgentTools(ctx, { service, mappings, config }) {
         sandboxPolicy,
         hasTool,
         getTool,
-        fileIntegration: ctx.get?.('fs') === undefined ? undefined : createFileIntegration(scope, ctx.get('fs')),
+        fileIntegration: filesystem === undefined ? undefined : createFileIntegration(fileEventPort(scope), filesystem),
       })
       if (definitions.deny.length > 0 && typeof scope.tools?.restrict === 'function') {
         scope.effect(
-          () => scope.tools.restrict({ deny: definitions.deny }),
+          () => scope.tools.restrict!({ deny: definitions.deny }),
           'dsh-remote-wsl: hide Windows shell',
         )
       }
@@ -123,7 +127,7 @@ export function registerAgentTools(ctx, { service, mappings, config }) {
         installPathsNote(agent, origin)
       }
     } catch (error) {
-      console.warn(`[dsh-remote-wsl] 为会话注册 WSL 工具失败：${error?.message ?? error}`)
+      console.warn(`[dsh-remote-wsl] 为会话注册 WSL 工具失败：${errorMessage(error)}`)
     }
   })
   return off

@@ -1,13 +1,12 @@
 /**
- * Dependency-free unit tests for `lib/wsl-detect.js` and `lib/wsl-path.js`.
+ * Dependency-free unit tests for the emitted WSL detection and path modules.
  *
  * No node:test runner and no third-party packages: a tiny `test(name, fn)` harness collects the
  * cases, runs them sequentially (async aware) after module evaluation, prints `PASS n FAIL m` and
  * sets `process.exitCode = 1` when anything failed.
  *
- * Run with the bundled Electron binary used as Node (Node itself is not on PATH):
- *   $env:ELECTRON_RUN_AS_NODE='1'
- *   & 'C:\Users\Mingf\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe' test\pure.test.js
+ * Run after building with Node.js 24 or newer:
+ *   node test/pure.test.ts
  */
 
 import assert from "node:assert/strict";
@@ -19,7 +18,7 @@ import {
   decodeWslOutput,
   normalizeWslOutput,
   parseWSLDistroList,
-} from "../lib/wsl-detect.js";
+} from "../dist/lib/wsl-detect.js";
 import {
   DEFAULT_MOUNT_ROOT,
   defaultUserFromWslConf,
@@ -42,10 +41,10 @@ import {
   parentLinuxPath,
   parseWslHostPath,
   uncCandidates,
-} from "../lib/wsl-path.js";
+} from "../dist/lib/wsl-path.js";
 
 /** @type {{name: string, fn: () => unknown}[]} */
-const tests = [];
+const tests: { name: string; fn: () => unknown }[] = [];
 
 /**
  * Register a test case. Async cases may return a promise; the runner awaits every case in order.
@@ -53,7 +52,7 @@ const tests = [];
  * @param {string} name
  * @param {() => unknown} fn
  */
-function test(name, fn) {
+function test(name: string, fn: () => unknown) {
   tests.push({ name, fn });
 }
 
@@ -160,8 +159,8 @@ test("createWslDiscovery exposes the documented TTL constant", () => {
 });
 
 test("createWslDiscovery.listDistros caches one exec for repeated calls and invalidate() re-runs it", async () => {
-  const calls = [];
-  const exec = async (args) => {
+  const calls: string[][] = [];
+  const exec = async (args: string[]) => {
     calls.push(args);
     return Buffer.from(DISTRO_LIST_SAMPLE, "utf16le");
   };
@@ -212,8 +211,8 @@ test("createWslDiscovery.listDistros evicts a rejected probe so the next call re
 });
 
 test("createWslDiscovery.isAvailable caches the probe and treats a missing wsl.exe as unavailable", async () => {
-  const calls = [];
-  const exec = async (args) => {
+  const calls: string[][] = [];
+  const exec = async (args: string[]) => {
     calls.push(args);
     throw new Error("'wsl.exe' is not recognized as an internal or external command");
   };
@@ -261,7 +260,7 @@ test("normalizeLinuxPath throws invalid-path for empty and control-character inp
   for (const bad of ["", "\u0000", "/a\nb", "/a\u007fb", undefined, null, 42]) {
     assert.throws(
       () => normalizeLinuxPath(bad),
-      (error) => error.code === "invalid-path",
+      (error: unknown) => error instanceof Error && 'code' in error && error.code === "invalid-path",
       `expected ${String(bad)} to throw invalid-path`,
     );
   }
@@ -540,7 +539,7 @@ for (const { name, fn } of tests) {
   } catch (error) {
     failed += 1;
     console.error(`not ok - ${name}`);
-    console.error(error?.stack ?? String(error));
+    console.error(error instanceof Error ? error.stack : String(error));
   }
 }
 

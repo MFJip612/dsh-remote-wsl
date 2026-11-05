@@ -2,9 +2,8 @@
 /**
  * dsh-remote-wsl test runner.
  *
- * Run with the DSH Electron binary used as Node (there is no node.exe on PATH in this desktop):
- *   $env:ELECTRON_RUN_AS_NODE='1'
- *   & 'C:\Users\Mingf\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe' test\run.js
+ * Run after building with Node.js 24 or newer:
+ *   node test/run.ts
  *
  * Sections: pure modules, then the host service against the real WSL distribution.
  * Exit code 1 on failure.
@@ -14,21 +13,29 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import type { ProcessOutcome, SubprocessPort } from '../dist/contracts.js'
+import { resolveConfig } from '../dist/config.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(here, '..')
-const load = (relative) => import(pathToFileURL(path.join(root, relative)).href)
+interface Modules {
+  'dist/lib/wsl-detect.js': typeof import('../dist/lib/wsl-detect.js')
+  'dist/lib/wsl-path.js': typeof import('../dist/lib/wsl-path.js')
+  'dist/lib/wsl-service.js': typeof import('../dist/lib/wsl-service.js')
+}
+// The generic key ties the dynamic file URL to its emitted declaration module.
+const load = <K extends keyof Modules>(relative: K): Promise<Modules[K]> => import(pathToFileURL(path.join(root, relative)).href)
 
 let passed = 0
-const failures = []
-async function test(name, fn) {
+const failures: { name: string; error: unknown }[] = []
+async function test(name: string, fn: () => unknown) {
   try {
     await fn()
     passed += 1
     console.log(`ok   ${name}`)
   } catch (error) {
     failures.push({ name, error })
-    console.error(`FAIL ${name}\n     ${error?.stack ?? error}`)
+    console.error(`FAIL ${name}\n     ${error instanceof Error ? error.stack : String(error)}`)
   }
 }
 
@@ -36,7 +43,7 @@ async function test(name, fn) {
  * Minimal subprocess bridge so this test can run without a DSH Host: spawns wsl.exe through
  * node:child_process and mimics the `{ spawn, resolveExecutable }` surface the service uses.
  */
-function createSubprocessBridge() {
+function createSubprocessBridge(): SubprocessPort {
   return {
     async resolveExecutable(command) {
       return path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', command)
@@ -56,7 +63,7 @@ function createSubprocessBridge() {
       } else {
         child.stdin?.end()
       }
-      const done = new Promise((resolve, reject) => {
+      const done = new Promise<ProcessOutcome>((resolve, reject) => {
         child.on('error', reject)
         child.on('close', (code, signal) => resolve({ exitCode: code, signal }))
       })
@@ -73,7 +80,7 @@ function createSubprocessBridge() {
 }
 
 async function main() {
-  const [detect, wslPath] = await Promise.all([load('lib/wsl-detect.js'), load('lib/wsl-path.js')])
+  const [detect, wslPath] = await Promise.all([load('dist/lib/wsl-detect.js'), load('dist/lib/wsl-path.js')])
 
   await test('decodeWslOutput: UTF-16LE with NULs', () => {
     const text = '  NAME  STATE  VERSION\n* Ubuntu  Running  2\n'
@@ -170,7 +177,7 @@ async function main() {
     assert.deepEqual(wslPath.parseWslHostPath('\\\\wsl$\\Ubuntu'), { distro: 'Ubuntu', linuxPath: '/' })
     assert.equal(wslPath.parseWslHostPath('C:\\work'), undefined)
     assert.deepEqual(wslPath.drivePathToLinux('E:\\source\\proj'), { linuxPath: '/mnt/e/source/proj' })
-    assert.equal(wslPath.drivePathToLinux('E:\\', {}).linuxPath, '/mnt/e')
+    assert.equal(wslPath.drivePathToLinux('E:\\', {})?.linuxPath, '/mnt/e')
   })
 
   await test('crumb / parent / hidden / key helpers', () => {
@@ -217,17 +224,19 @@ async function main() {
   })
 
   // ---- real WSL integration (skipped when WSL is unavailable) -------------------------------
-  const { createWslService } = await load('lib/wsl-service.js')
-  const service = createWslService({ subprocess: createSubprocessBridge() }, {
+  const { createWslService } = await load('dist/lib/wsl-service.js')
+  const service = createWslService({ subprocess: createSubprocessBridge() }, resolveConfig({
     execTimeoutMs: 20000,
     maxEntries: 2000,
     mountRoot: '',
-  })
+  }))
   const listed = await service.listDistros({ refresh: true })
+  const firstDistro = listed.distros[0]
   if (!listed.available || listed.distros.length === 0) {
     console.log('skip real-WSL integration (WSL unavailable)')
   } else {
-    const distro = listed.defaultDistro ?? listed.distros[0].name
+    assert.ok(firstDistro)
+    const distro = listed.defaultDistro ?? firstDistro.name
     await test(`real: identity of ${distro}`, async () => {
       const identity = await service.resolveIdentity(distro)
       assert.equal(identity.distro, distro)
@@ -252,6 +261,7 @@ async function main() {
     })
     await test('real: unknown distro is a coded error', async () => {
       await assert.rejects(service.requireDistro('__dsh_no_such_distro__'), (error) => {
+        assert.ok(error instanceof Error && 'code' in error)
         assert.equal(error.code, 'distro-not-found')
         return true
       })

@@ -1,3 +1,7 @@
+import type { Context } from '@deepseek-ai/cordis'
+import { hostPort } from './contracts.js'
+import { resolveConfig } from './config.js'
+export { Config } from './config.js'
 /**
  * dsh-remote-wsl — Host half.
  *
@@ -19,46 +23,8 @@ export const name = 'dsh-remote-wsl'
 /** Required Host services; optional collaborators are resolved with ctx.inject/ctx.get below. */
 export const inject = ['webServer', 'connection', 'subprocess']
 
-const DEFAULTS = Object.freeze({
-  /** Route the sidebar terminal of a WSL workspace into the distribution. */
-  terminal: true,
-  /** Give sessions of a WSL workspace Linux-side bash/read/write/edit/glob/grep tools. */
-  tools: true,
-  /** Distribution discovery cache lifetime (ms). */
-  distroCacheMs: 5000,
-  /** Per-wsl.exe-call deadline (ms). */
-  execTimeoutMs: 15000,
-  /** Maximum directory entries returned to the picker. */
-  maxEntries: 2000,
-  /** Maximum bytes a single read tool call returns. */
-  maxReadBytes: 2000000,
-  /** Preferred distribution when the caller does not pick one ('' = WSL default). */
-  defaultDistro: '',
-  /** Automount root inside the distribution ('' = read /etc/wsl.conf, fallback /mnt). */
-  mountRoot: '',
-  /** Allow non-loopback clients to call the plugin routes (default: loopback only). */
-  remote: false,
-})
-
-function resolveConfig(raw) {
-  const config = { ...DEFAULTS }
-  if (typeof raw !== 'object' || raw === null) return config
-  for (const key of Object.keys(DEFAULTS)) {
-    const value = raw[key]
-    if (value === undefined) continue
-    if (typeof DEFAULTS[key] === 'boolean') {
-      config[key] = value === true
-    } else if (typeof DEFAULTS[key] === 'number') {
-      const numeric = Number(value)
-      if (Number.isFinite(numeric) && numeric > 0) config[key] = numeric
-    } else if (typeof value === 'string') {
-      config[key] = value
-    }
-  }
-  return config
-}
-
-export function apply(ctx, rawConfig) {
+export function apply(context: Context, rawConfig: unknown) {
+  const ctx = hostPort(context)
   const config = resolveConfig(rawConfig)
   const service = createWslService(ctx, config)
   const mappings = createWorkspaceMappingStore(config)

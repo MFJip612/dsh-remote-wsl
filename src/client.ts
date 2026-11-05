@@ -19,6 +19,36 @@ window.__ModuleLoader__.load({
     const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
     const useSyncExternalStore = typeof React.useSyncExternalStore === 'function' ? React.useSyncExternalStore : null;
 
+    function isRecord(value: unknown): value is Record<string, unknown> {
+      return value !== null && typeof value === 'object';
+    }
+
+    function distroPayload(value: Record<string, unknown>): ClientDistroPayload {
+      return {
+        distros: Array.isArray(value.distros) ? value.distros : undefined,
+        defaultDistro: typeof value.defaultDistro === 'string' ? value.defaultDistro : undefined,
+      };
+    }
+
+    function listingPayload(value: Record<string, unknown>): ClientListing {
+      const entries: ClientDirectoryEntry[] = [];
+      if (Array.isArray(value.entries)) {
+        for (const entry of value.entries) {
+          if (!isRecord(entry) || typeof entry.name !== 'string' || typeof entry.path !== 'string') continue;
+          entries.push({ name: entry.name, path: entry.path, hidden: entry.hidden === true, symlink: entry.symlink === true });
+        }
+      }
+      return {
+        distro: typeof value.distro === 'string' ? value.distro : undefined,
+        path: typeof value.path === 'string' ? value.path : undefined,
+        home: typeof value.home === 'string' ? value.home : undefined,
+        parent: typeof value.parent === 'string' ? value.parent : null,
+        crumbs: crumbsFromListing(value),
+        entries,
+        truncated: value.truncated === true,
+      };
+    }
+
     // ---------------------------------------------------------------------
     // Dictionaries
     // ---------------------------------------------------------------------
@@ -404,14 +434,14 @@ window.__ModuleLoader__.load({
      * one of `distro.status.connected|stopped|installing` and `state` carries the
      * raw WSL state for the uncovered case (the English dictionary renders it).
      */
-    function mapDistroStatus(distros) {
-      const rows = [];
+    function mapDistroStatus(distros: unknown): ClientDistroRow[] {
+      const rows: ClientDistroRow[] = [];
       if (!Array.isArray(distros)) return rows;
       for (const distro of distros) {
-        if (distro === null || typeof distro !== 'object') continue;
+        if (!isRecord(distro)) continue;
         const name = typeof distro.name === 'string' ? distro.name.trim() : '';
         if (name === '') continue;
-        let status = 'stopped';
+        let status: ClientDistroRow['status'] = 'stopped';
         if (distro.status === 'running' || distro.status === 'stopped' || distro.status === 'other') status = distro.status;
         else if (distro.running === true) status = 'running';
         const rawState = typeof distro.state === 'string' && distro.state.trim() !== '' ? distro.state : status;
@@ -438,14 +468,16 @@ window.__ModuleLoader__.load({
      * @param query - the search box text.
      * @returns the matching entries (or all entries for an empty/path query).
      */
-    function filterEntries(entries, query) {
+    function filterEntries<T>(entries: T[], query: unknown): T[];
+    function filterEntries(entries: unknown, query: unknown): unknown[];
+    function filterEntries(entries: unknown, query: unknown): unknown[] {
       if (!Array.isArray(entries)) return [];
+      const values: unknown[] = entries;
       const text = typeof query === 'string' ? query.trim() : '';
-      if (text === '' || text.charAt(0) === '/' || text.charAt(0) === '~') return entries.slice();
+      if (text === '' || text.charAt(0) === '/' || text.charAt(0) === '~') return values.slice();
       const needle = text.toLowerCase();
-      return entries.filter((entry) => (
-        entry !== null
-        && typeof entry === 'object'
+      return values.filter((entry) => (
+        isRecord(entry)
         && typeof entry.name === 'string'
         && entry.name.toLowerCase().indexOf(needle) !== -1
       ));
@@ -459,12 +491,12 @@ window.__ModuleLoader__.load({
      * @param listing - a Host or Host-backed `listDirectory` listing.
      * @returns `[{ name, path }]`.
      */
-    function crumbsFromListing(listing) {
-      const crumbs = [];
-      if (listing === null || typeof listing !== 'object') return crumbs;
+    function crumbsFromListing(listing: unknown): ClientCrumb[] {
+      const crumbs: ClientCrumb[] = [];
+      if (!isRecord(listing)) return crumbs;
       const raw = Array.isArray(listing.crumbs) ? listing.crumbs : [];
       for (const crumb of raw) {
-        if (crumb === null || typeof crumb !== 'object') continue;
+        if (!isRecord(crumb)) continue;
         const path = typeof crumb.path === 'string' ? crumb.path : '';
         if (path === '') continue;
         const name = typeof crumb.name === 'string' && crumb.name !== '' ? crumb.name : path;
@@ -485,9 +517,9 @@ window.__ModuleLoader__.load({
      * @param t - locale translate function (locale keys resolve through it).
      * @returns the Host message, or the localized generic failure text.
      */
-    function formatConnectError(payload, t) {
-      const translate = typeof t === 'function' ? t : (key) => key;
-      if (payload !== null && typeof payload === 'object' && payload.error !== null && typeof payload.error === 'object') {
+    function formatConnectError(payload: unknown, t?: ClientTranslate): string {
+      const translate = typeof t === 'function' ? t : (key: string) => key;
+      if (isRecord(payload) && isRecord(payload.error)) {
         if (typeof payload.error.message === 'string' && payload.error.message.trim() !== '') return payload.error.message;
       }
       if (typeof payload === 'string' && payload.trim() !== '') return payload.trim();
@@ -500,12 +532,12 @@ window.__ModuleLoader__.load({
      * @param rel - relative or absolute segment, e.g. `projects` or `/usr/lib`.
      * @returns the normalized absolute path.
      */
-    function joinLinuxPath(base, rel) {
+    function joinLinuxPath(base: unknown, rel: unknown): string {
       const baseText = typeof base === 'string' ? base : '';
       const relText = typeof rel === 'string' ? rel : '';
       const absolute = relText.charAt(0) === '/';
-      const segments = [];
-      const eat = (text) => {
+      const segments: string[] = [];
+      const eat = (text: string) => {
         for (const part of String(text).split('/')) {
           if (part === '' || part === '.') continue;
           if (part === '..') {
@@ -532,10 +564,10 @@ window.__ModuleLoader__.load({
      * @param query - the search box text.
      * @returns the target absolute path, or null when the query is not path-like.
      */
-    function resolveQueryPath(listing, query) {
+    function resolveQueryPath(listing: unknown, query: unknown): string | null {
       const text = typeof query === 'string' ? query.trim() : '';
       if (text === '') return null;
-      const home = listing !== null && typeof listing === 'object' && typeof listing.home === 'string' && listing.home !== ''
+      const home = isRecord(listing) && typeof listing.home === 'string' && listing.home !== ''
         ? listing.home
         : '/';
       if (text === '~') return joinLinuxPath('/', home);
@@ -550,8 +582,8 @@ window.__ModuleLoader__.load({
      * @param entry - one directory entry.
      * @returns whether the entry is a hidden folder.
      */
-    function isHiddenEntry(entry) {
-      if (entry === null || typeof entry !== 'object') return false;
+    function isHiddenEntry(entry: unknown): boolean {
+      if (!isRecord(entry)) return false;
       if (entry.hidden === true) return true;
       return typeof entry.name === 'string' && entry.name.charAt(0) === '.';
     }
@@ -566,9 +598,9 @@ window.__ModuleLoader__.load({
      * @param error - rejection reason.
      * @returns whether the native picker is unavailable in this composition.
      */
-    function isPickerUnavailable(error) {
-      const seen = new Set();
-      const check = (value, depth) => {
+    function isPickerUnavailable(error: unknown): boolean {
+      const seen = new Set<object>();
+      const check = (value: unknown, depth: number): boolean => {
         if (depth > 5 || value === null || value === undefined) return false;
         if (typeof value === 'string') {
           const text = value.toLowerCase();
@@ -577,7 +609,7 @@ window.__ModuleLoader__.load({
             || text.indexOf('needs the browse capability') !== -1
             || (text.indexOf('directory picker') !== -1 && text.indexOf('unavailable') !== -1);
         }
-        if (typeof value !== 'object' || seen.has(value)) return false;
+        if (!isRecord(value) || seen.has(value)) return false;
         seen.add(value);
         for (const key of ['code', 'name', 'message', 'reason', 'rpcError', 'error', 'cause', 'details']) {
           if (Object.prototype.hasOwnProperty.call(value, key) && check(value[key], depth + 1)) return true;
@@ -588,10 +620,10 @@ window.__ModuleLoader__.load({
     }
 
     /** Extract a readable message from an arbitrary rejection (RPC-shaped reasons included). */
-    function failureText(error) {
-      if (error !== null && typeof error === 'object') {
+    function failureText(error: unknown): string {
+      if (isRecord(error)) {
         const rpcError = error.rpcError;
-        if (rpcError !== null && typeof rpcError === 'object' && typeof rpcError.message === 'string' && rpcError.message !== '') return rpcError.message;
+        if (isRecord(rpcError) && typeof rpcError.message === 'string' && rpcError.message !== '') return rpcError.message;
         if (typeof error.message === 'string' && error.message !== '') return error.message;
       }
       if (typeof error === 'string' && error !== '') return error;
@@ -607,9 +639,9 @@ window.__ModuleLoader__.load({
      * @param initial - initial state object.
      * @returns `{ get, set, subscribe }`.
      */
-    function createStore(initial) {
+    function createStore<S extends object>(initial: S): ClientStore<S> {
       let state = initial;
-      const listeners = new Set();
+      const listeners = new Set<() => void>();
       return {
         get: () => state,
         set(patch) {
@@ -631,7 +663,7 @@ window.__ModuleLoader__.load({
       };
     }
 
-    const EMPTY_FLOW = Object.freeze({
+    const EMPTY_FLOW: Readonly<ClientFlowState> = Object.freeze({
       active: false,
       step: 'source',
       mode: 'wsl',
@@ -651,11 +683,11 @@ window.__ModuleLoader__.load({
     /** Bumped on every begin/clear so late HTTP settlements are dropped. */
     let flowEpoch = 0;
     /** Pending listing request controller (absent where AbortController is unavailable). */
-    let listingAbort = null;
+    let listingAbort: AbortController | null = null;
     /** The injected `uiWorkspace` service, captured in `apply`. */
-    let workspaceService = null;
+    let workspaceService: ClientWorkspacePort | null = null;
     /** The injected native pick function, captured in `apply`. */
-    let pickNativeImpl = null;
+    let pickNativeImpl: () => unknown | Promise<unknown> = () => Promise.reject(pickerUnavailable());
 
     function abortListing() {
       if (listingAbort === null) return;
@@ -671,9 +703,9 @@ window.__ModuleLoader__.load({
      * Create the module-level flow store. `begin` snapshots a handlers source so
      * every read uses the owner's LATEST props (the bridge refreshes it per render).
      */
-    function createFlowStore() {
-      const store = createStore(EMPTY_FLOW);
-      let handlersSource = null;
+    function createFlowStore(): ClientFlowStore {
+      const store = createStore<ClientFlowState>(EMPTY_FLOW);
+      let handlersSource: (() => ClientHandlers) | null = null;
       return {
         get: store.get,
         set: store.set,
@@ -681,7 +713,7 @@ window.__ModuleLoader__.load({
         begin(source) {
           flowEpoch += 1;
           abortListing();
-          handlersSource = typeof source === 'function' ? source : () => (source !== null && typeof source === 'object' ? source : {});
+          handlersSource = typeof source === 'function' ? source : () => (isRecord(source) ? source : {});
           store.set(Object.assign({}, EMPTY_FLOW, { active: true }));
         },
         clear() {
@@ -694,7 +726,7 @@ window.__ModuleLoader__.load({
           if (typeof handlersSource !== 'function') return {};
           try {
             const value = handlersSource();
-            return value !== null && typeof value === 'object' ? value : {};
+            return isRecord(value) ? value : {};
           } catch (error) {
             return {};
           }
@@ -708,28 +740,27 @@ window.__ModuleLoader__.load({
     // HTTP client
     // ---------------------------------------------------------------------
 
-    function apiError(kind, payload) {
-      const error = new Error(kind === 'network' ? 'dsh-remote-wsl: network failure' : 'dsh-remote-wsl: request rejected');
-      error.drw = { kind, payload };
+    function apiError(kind: 'network' | 'http' | 'unavailable', payload: unknown) {
+      const error = Object.assign(new Error(kind === 'network' ? 'dsh-remote-wsl: network failure' : 'dsh-remote-wsl: request rejected'), { drw: { kind, payload } });
       return error;
     }
 
-    function payloadOf(error) {
-      if (error !== null && typeof error === 'object') {
-        if (error.drw && Object.prototype.hasOwnProperty.call(error.drw, 'payload')) return error.drw.payload;
+    function payloadOf(error: unknown): unknown {
+      if (isRecord(error)) {
+        if (isRecord(error.drw) && Object.prototype.hasOwnProperty.call(error.drw, 'payload')) return error.drw.payload;
         if (Object.prototype.hasOwnProperty.call(error, 'payload')) return error.payload;
       }
       return null;
     }
 
     /** Localized text for a failed data request (payload message first). */
-    function listErrorText(error, t, fallbackKey) {
-      const translate = typeof t === 'function' ? t : (key) => key;
+    function listErrorText(error: unknown, t: ClientTranslate, fallbackKey?: string): string {
+      const translate = typeof t === 'function' ? t : (key: string) => key;
       const fallback = () => translate(fallbackKey || 'error.generic');
-      if (error !== null && typeof error === 'object' && error.drw) {
+      if (isRecord(error) && error.drw) {
         const payload = payloadOf(error);
-        if (payload !== null && typeof payload === 'object') {
-          if (payload.error !== null && typeof payload.error === 'object' && typeof payload.error.message === 'string' && payload.error.message !== '') return payload.error.message;
+        if (isRecord(payload)) {
+          if (isRecord(payload.error) && typeof payload.error.message === 'string' && payload.error.message !== '') return payload.error.message;
           if (typeof payload.message === 'string' && payload.message !== '') return payload.message;
         }
         return fallback();
@@ -744,14 +775,14 @@ window.__ModuleLoader__.load({
      * @param init - optional fetch init.
      * @returns parsed JSON payload.
      */
-    async function fetchJson(url, init) {
+    async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
       let response;
       try {
         response = await fetch(url, Object.assign({ credentials: 'same-origin' }, init || {}));
       } catch (error) {
         throw apiError('network', null);
       }
-      let payload = null;
+      let payload: unknown = null;
       try {
         payload = await response.json();
       } catch (error) {
@@ -761,7 +792,7 @@ window.__ModuleLoader__.load({
       return payload;
     }
 
-    function distroListUrl(distro, path) {
+    function distroListUrl(distro: string, path: string | null): string {
       const params = ['distro=' + encodeURIComponent(distro)];
       if (typeof path === 'string' && path !== '') params.push('path=' + encodeURIComponent(path));
       params.push('hidden=1');
@@ -772,12 +803,12 @@ window.__ModuleLoader__.load({
     // Flow data operations
     // ---------------------------------------------------------------------
 
-    function loadStatus(t) {
+    function loadStatus(t: ClientTranslate) {
       const epoch = flowEpoch;
       flowStore.set({ status: { loading: true, available: null, error: null } });
       fetchJson(API + 'status').then((payload) => {
         if (epoch !== flowEpoch) return;
-        const value = payload !== null && typeof payload === 'object' ? payload : {};
+        const value = isRecord(payload) ? payload : {};
         flowStore.set({
           status: {
             loading: false,
@@ -793,16 +824,16 @@ window.__ModuleLoader__.load({
       });
     }
 
-    function loadDistros(t, refresh) {
+    function loadDistros(t: ClientTranslate, refresh: boolean) {
       const epoch = flowEpoch;
       const current = flowStore.get().distros;
-      const keep = refresh === true && current !== null && typeof current === 'object' && current.data !== null
+      const keep = refresh === true && isRecord(current) && current.data !== null
         ? current.data
         : null;
       flowStore.set({ distros: { loading: true, error: null, data: keep } });
       fetchJson(API + 'distros' + (refresh === true ? '?refresh=1' : '')).then((payload) => {
         if (epoch !== flowEpoch) return;
-        const value = payload !== null && typeof payload === 'object' ? payload : {};
+        const value = isRecord(payload) ? payload : {};
         if (value.available === false) {
           flowStore.set({
             distros: {
@@ -813,26 +844,26 @@ window.__ModuleLoader__.load({
           });
           return;
         }
-        flowStore.set({ distros: { loading: false, error: null, data: value } });
+        flowStore.set({ distros: { loading: false, error: null, data: distroPayload(value) } });
       }, (error) => {
         if (epoch !== flowEpoch) return;
         flowStore.set({ distros: { loading: false, data: null, error: listErrorText(error, t, 'error.distros') } });
       });
     }
 
-    function openDistrosStep(t) {
+    function openDistrosStep(t: ClientTranslate) {
       flowStore.set({ step: 'distros', error: null, distros: { loading: true, error: null, data: null } });
       loadDistros(t, false);
     }
 
-    function backToDistros(t) {
+    function backToDistros(t: ClientTranslate) {
       abortListing();
       const distros = flowStore.get().distros;
       flowStore.set({ step: 'distros', error: null });
-      if (distros === null || typeof distros !== 'object' || (distros.data === null && distros.loading !== true && !distros.error)) loadDistros(t, false);
+      if (!isRecord(distros) || (distros.data === null && distros.loading !== true && !distros.error)) loadDistros(t, false);
     }
 
-    function warmDistro(name) {
+    function warmDistro(name: string) {
       try {
         Promise.resolve(fetchJson(API + 'warm?distro=' + encodeURIComponent(name))).catch(() => {});
       } catch (error) {
@@ -845,7 +876,7 @@ window.__ModuleLoader__.load({
      * @param t - locale translator.
      * @param path - absolute folder path, or null to list the default/home level.
      */
-    function loadListing(t, path) {
+    function loadListing(t: ClientTranslate, path: string | null) {
       abortListing();
       const controller = typeof AbortController === 'function' ? new AbortController() : null;
       listingAbort = controller;
@@ -856,13 +887,13 @@ window.__ModuleLoader__.load({
       const target = typeof path === 'string' && path.trim() !== '' ? path.trim() : null;
       flowStore.set({ requestedPath: target, search: '', listing: { loading: true, error: null, data: null } });
 
-      const fail = (error) => {
+      const fail = (error: unknown) => {
         if (epoch !== flowEpoch || listingAbort !== controller) return;
         listingAbort = null;
         flowStore.set({ listing: { loading: false, error: listErrorText(error, t, 'error.list'), data: null } });
       };
 
-      let request;
+      let request: Promise<unknown>;
       if (mode === 'local') {
         const service = workspaceService;
         if (service === null || typeof service.listDirectory !== 'function') {
@@ -889,18 +920,18 @@ window.__ModuleLoader__.load({
       request.then((payload) => {
         if (epoch !== flowEpoch || listingAbort !== controller) return;
         listingAbort = null;
-        const value = payload !== null && typeof payload === 'object' ? payload : {};
-        if (value.error !== null && typeof value.error === 'object') {
+        const value = isRecord(payload) ? payload : {};
+        if (isRecord(value.error)) {
           const message = typeof value.error.message === 'string' && value.error.message !== '' ? value.error.message : t('error.list');
           flowStore.set({ listing: { loading: false, error: message, data: null } });
           return;
         }
-        flowStore.set({ listing: { loading: false, error: null, data: value } });
+        flowStore.set({ listing: { loading: false, error: null, data: listingPayload(value) } });
       }, fail);
     }
 
-    function openFolderStep(t, options) {
-      const opts = options !== null && typeof options === 'object' ? options : {};
+    function openFolderStep(t: ClientTranslate, options: { mode?: 'wsl' | 'local'; distro?: string | null; path?: string | null }) {
+      const opts = isRecord(options) ? options : {};
       const path = typeof opts.path === 'string' && opts.path !== '' ? opts.path : null;
       flowStore.set({
         step: 'folder',
@@ -916,13 +947,13 @@ window.__ModuleLoader__.load({
       loadListing(t, path);
     }
 
-    function retryListing(t) {
+    function retryListing(t: ClientTranslate) {
       const state = flowStore.get();
       if (state.step !== 'folder') return;
       loadListing(t, state.requestedPath);
     }
 
-    function backFromFolder(t) {
+    function backFromFolder(t: ClientTranslate) {
       if (flowStore.get().mode === 'local') {
         abortListing();
         flowStore.set({ step: 'source', error: null });
@@ -931,7 +962,7 @@ window.__ModuleLoader__.load({
       backToDistros(t);
     }
 
-    function goBack(t) {
+    function goBack(t: ClientTranslate) {
       const state = flowStore.get();
       if (state.step === 'folder') {
         backFromFolder(t);
@@ -948,7 +979,7 @@ window.__ModuleLoader__.load({
     // Owner conversation outcomes
     // ---------------------------------------------------------------------
 
-    function finishPicked(workspacePath) {
+    function finishPicked(workspacePath: string) {
       const handlers = flowStore.handlers();
       flowStore.clear();
       if (typeof handlers.onPicked === 'function') {
@@ -972,7 +1003,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function failFlow(message) {
+    function failFlow(message: string) {
       const handlers = flowStore.handlers();
       flowStore.clear();
       if (typeof handlers.onError === 'function') {
@@ -984,9 +1015,9 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function pickedPathOf(value) {
+    function pickedPathOf(value: unknown): string | null {
       if (typeof value === 'string') return value !== '' ? value : null;
-      if (value !== null && typeof value === 'object' && typeof value.path === 'string' && value.path !== '') return value.path;
+      if (isRecord(value) && typeof value.path === 'string' && value.path !== '') return value.path;
       return null;
     }
 
@@ -995,7 +1026,7 @@ window.__ModuleLoader__.load({
      * `directory-picker/unavailable` opens the same browser component in local
      * mode; a resolved path fulfils the owner conversation; `null` is a cancel.
      */
-    async function pickLocalFolder(t) {
+    async function pickLocalFolder(t: ClientTranslate) {
       if (flowStore.get().nativeBusy === true) return;
       flowStore.set({ nativeBusy: true, error: null });
       try {
@@ -1020,18 +1051,18 @@ window.__ModuleLoader__.load({
     }
 
     /** Enter the in-app folder browser for one WSL distro. */
-    function pickDistro(t, name) {
+    function pickDistro(t: ClientTranslate, name: string) {
       if (typeof name !== 'string' || name === '') return;
       warmDistro(name);
       openFolderStep(t, { mode: 'wsl', distro: name, path: null });
     }
 
     /** POST the chosen folder to the Host; success hands the mapped path to the owner. */
-    async function confirmFolder(t) {
+    async function confirmFolder(t: ClientTranslate) {
       const state = flowStore.get();
       if (state.confirming === true) return;
       const listing = state.listing !== null && typeof state.listing === 'object' ? state.listing.data : null;
-      if (listing === null || typeof listing !== 'object' || typeof listing.path !== 'string' || listing.path === '') return;
+      if (!isRecord(listing) || typeof listing.path !== 'string' || listing.path === '') return;
       if (state.mode === 'local') {
         finishPicked(listing.path);
         return;
@@ -1040,13 +1071,14 @@ window.__ModuleLoader__.load({
       const distro = typeof state.distro === 'string' ? state.distro : '';
       flowStore.set({ confirming: true, error: null });
       try {
+        const request: ClientConnectRequest = { distro, linuxPath: listing.path };
         const payload = await fetchJson(API + 'connect', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ distro, linuxPath: listing.path }),
+          body: JSON.stringify(request),
         });
         if (epoch !== flowEpoch) return;
-        const workspacePath = payload !== null && typeof payload === 'object' && typeof payload.workspacePath === 'string'
+        const workspacePath = isRecord(payload) && typeof payload.workspacePath === 'string'
           ? payload.workspacePath
           : '';
         if (workspacePath === '') {
@@ -1064,7 +1096,7 @@ window.__ModuleLoader__.load({
     // Icons
     // ---------------------------------------------------------------------
 
-    function icon(size, children) {
+    function icon(size: number | undefined, children: ClientReactNode) {
       return h('svg', {
         viewBox: '0 0 16 16',
         width: size === undefined ? 16 : size,
@@ -1075,7 +1107,7 @@ window.__ModuleLoader__.load({
       }, children);
     }
 
-    function FolderIcon(props) {
+    function FolderIcon(props: { size?: number }) {
       return h('svg', {
         viewBox: '0 0 16 16',
         width: props.size || 16,
@@ -1090,7 +1122,7 @@ window.__ModuleLoader__.load({
       }));
     }
 
-    function TerminalIcon(props) {
+    function TerminalIcon(props: { size?: number }) {
       return icon(props.size || 16, [
         h('rect', {
           key: 'frame',
@@ -1106,7 +1138,7 @@ window.__ModuleLoader__.load({
       ]);
     }
 
-    function RefreshIcon(props) {
+    function RefreshIcon(props: { size?: number }) {
       return icon(props.size || 14, h('path', {
         d: 'M13 8a5 5 0 1 1-1.46-3.54M13.2 2.2v2.9h-2.9',
         fill: 'none', stroke: 'currentColor', strokeWidth: 1.2,
@@ -1114,14 +1146,14 @@ window.__ModuleLoader__.load({
       }));
     }
 
-    function SearchIcon(props) {
+    function SearchIcon(props: { size?: number }) {
       return icon(props.size || 14, [
         h('circle', { key: 'c', cx: 7, cy: 7, r: 4.2, fill: 'none', stroke: 'currentColor', strokeWidth: 1.2 }),
         h('path', { key: 'l', d: 'm10.2 10.2 3.4 3.4', fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round' }),
       ]);
     }
 
-    function CheckIcon(props) {
+    function CheckIcon(props: { size?: number }) {
       return icon(props.size || 14, h('path', {
         d: 'm2.8 8.4 3.2 3.2 7.2-7.2',
         fill: 'none', stroke: 'currentColor', strokeWidth: 1.4,
@@ -1129,7 +1161,7 @@ window.__ModuleLoader__.load({
       }));
     }
 
-    function UpIcon(props) {
+    function UpIcon(props: { size?: number }) {
       return icon(props.size || 12, h('path', {
         d: 'M8 13V3.5M4.2 7.2 8 3.4l3.8 3.8',
         fill: 'none', stroke: 'currentColor', strokeWidth: 1.2,
@@ -1137,7 +1169,7 @@ window.__ModuleLoader__.load({
       }));
     }
 
-    function ChevronIcon(props) {
+    function ChevronIcon(props: { size?: number }) {
       return icon(props.size || 12, h('path', {
         d: 'm6 3.5 4.5 4.5L6 12.5',
         fill: 'none', stroke: 'currentColor', strokeWidth: 1.2,
@@ -1145,7 +1177,7 @@ window.__ModuleLoader__.load({
       }));
     }
 
-    function GoIcon(props) {
+    function GoIcon(props: { size?: number }) {
       return icon(props.size || 14, [
         h('path', {
           key: 'a',
@@ -1156,7 +1188,7 @@ window.__ModuleLoader__.load({
       ]);
     }
 
-    function Spinner(props) {
+    function Spinner(props: { size?: number }) {
       const size = props !== null && props !== undefined && typeof props.size === 'number' ? props.size : 14;
       return h('span', { className: 'drw-spinner', 'aria-hidden': true, style: { width: size, height: size } },
         h('svg', {
@@ -1183,7 +1215,7 @@ window.__ModuleLoader__.load({
     // Shared UI atoms
     // ---------------------------------------------------------------------
 
-    function Button(props) {
+    function Button(props: ClientButtonProps) {
       const variant = props.variant === 'primary' ? ' drw-button-primary' : props.variant === 'outline' ? ' drw-button-outline' : '';
       return h('button', {
         type: 'button',
@@ -1194,11 +1226,11 @@ window.__ModuleLoader__.load({
       }, props.children);
     }
 
-    function DialogHeader(props) {
+    function DialogHeader(props: { title: string }) {
       return h('div', { className: 'drw-header' }, h('h2', { className: 'drw-title' }, props.title));
     }
 
-    function DialogFooter(props) {
+    function DialogFooter(props: import('react').PropsWithChildren) {
       return h('div', { className: 'drw-footer' }, props.children);
     }
 
@@ -1206,19 +1238,19 @@ window.__ModuleLoader__.load({
     // Flow components
     // ---------------------------------------------------------------------
 
-    function stepTitle(step, t) {
+    function stepTitle(step: string, t: ClientTranslate) {
       if (step === 'distros') return t('distros.title');
       if (step === 'folder') return t('folder.title');
       return t('source.title');
     }
 
-    function fallbackTranslate(key) {
+    function fallbackTranslate(key: string) {
       return key;
     }
 
     /** Subscribe an overlay render to the module store (uSES when available). */
-    function useFlowState(store) {
-      const subscribe = React.useCallback((listener) => store.subscribe(listener), [store]);
+    function useFlowState(store: ClientFlowStore) {
+      const subscribe = React.useCallback((listener: () => void) => store.subscribe(listener), [store]);
       const getSnapshot = React.useCallback(() => store.get(), [store]);
       const [fallback, setFallback] = React.useState(getSnapshot);
       React.useEffect(() => {
@@ -1235,8 +1267,8 @@ window.__ModuleLoader__.load({
      * edge into the module store and keeps the store's handler source pointed at
      * the newest props, so late settlements never call stale callbacks.
      */
-    function FlowBridge(rawProps) {
-      const props = rawProps !== null && typeof rawProps === 'object' ? rawProps : {};
+    function FlowBridge(rawProps: ClientFlowProps) {
+      const props: ClientFlowProps = isRecord(rawProps) ? rawProps : {};
       const store = props.store !== null && typeof props.store === 'object' && typeof props.store.begin === 'function' ? props.store : flowStore;
       const propsRef = React.useRef(props);
       propsRef.current = props;
@@ -1269,12 +1301,12 @@ window.__ModuleLoader__.load({
      * The frame-overlay occupant: renders nothing while no flow is active and
      * portals the current step's dialog to the document body otherwise.
      */
-    function FlowOverlay(rawProps) {
-      const props = rawProps !== null && typeof rawProps === 'object' ? rawProps : {};
+    function FlowOverlay(rawProps: ClientFlowProps) {
+      const props: ClientFlowProps = isRecord(rawProps) ? rawProps : {};
       const store = props.store !== null && typeof props.store === 'object' && typeof props.store.get === 'function' ? props.store : flowStore;
       const t = typeof props.t === 'function' ? props.t : fallbackTranslate;
       const state = useFlowState(store);
-      if (state === null || typeof state !== 'object' || state.active !== true) return null;
+      if (!isRecord(state) || state.active !== true) return null;
       if (typeof document === 'undefined' || document.body === null || document.body === undefined) return null;
       let node = null;
       try {
@@ -1290,9 +1322,9 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function trapTab(event, root) {
+    function trapTab(event: import('react').KeyboardEvent, root: HTMLElement | null) {
       if (root === null || root === undefined || typeof root.querySelectorAll !== 'function') return;
-      const nodes = Array.prototype.slice.call(root.querySelectorAll(FOCUSABLE));
+      const nodes = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
       if (nodes.length === 0) return;
       const first = nodes[0];
       const last = nodes[nodes.length - 1];
@@ -1311,11 +1343,11 @@ window.__ModuleLoader__.load({
     }
 
     /** The active dialog: shared chrome, focus management, and step switching. */
-    function FlowRoot(props) {
+    function FlowRoot(props: ClientFlowRootProps) {
       const store = props.store;
-      const state = props.state !== null && typeof props.state === 'object' ? props.state : {};
+      const state = props.state !== null && typeof props.state === 'object' ? props.state : EMPTY_FLOW;
       const t = typeof props.t === 'function' ? props.t : fallbackTranslate;
-      const cardRef = React.useRef(null);
+      const cardRef = React.useRef<HTMLDivElement>(null);
       const step = state.step === 'distros' || state.step === 'folder' ? state.step : 'source';
       const title = stepTitle(step, t);
       const busy = state.ownerBusy === true || state.confirming === true || state.nativeBusy === true;
@@ -1323,8 +1355,8 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const card = cardRef.current;
         if (card === null || card === undefined || typeof card.querySelector !== 'function') return;
-        let target = card.querySelector('[data-drw-autofocus]');
-        if (target === null || target === undefined || target.disabled === true) target = card.querySelector(FOCUSABLE);
+        let target = card.querySelector<HTMLElement>('[data-drw-autofocus]');
+        if (target === null || target === undefined || ('disabled' in target && target.disabled === true)) target = card.querySelector<HTMLElement>(FOCUSABLE);
         if (target !== null && target !== undefined && typeof target.focus === 'function') {
           try {
             target.focus({ preventScroll: true });
@@ -1343,7 +1375,7 @@ window.__ModuleLoader__.load({
       // lifetime instead of the card's bubbled key handler.
       React.useEffect(() => {
         if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return undefined;
-        const onEscape = (event) => {
+        const onEscape = (event: KeyboardEvent) => {
           if (event === null || event === undefined || event.key !== 'Escape' || event.isComposing === true) return;
           event.preventDefault();
           goBack(t);
@@ -1352,13 +1384,13 @@ window.__ModuleLoader__.load({
         return () => document.removeEventListener('keydown', onEscape);
       }, [t]);
 
-      const onKeyDown = (event) => {
+      const onKeyDown = (event: import('react').KeyboardEvent<HTMLDivElement>) => {
         if (event === null || event === undefined) return;
         if (event.key !== 'Tab') return;
         trapTab(event, cardRef.current);
       };
 
-      const onBackdropMouseDown = (event) => {
+      const onBackdropMouseDown = (event: import('react').MouseEvent<HTMLDivElement>) => {
         if (event === null || event === undefined) return;
         if (event.target === event.currentTarget) cancelFlow();
       };
@@ -1382,8 +1414,8 @@ window.__ModuleLoader__.load({
     }
 
     /** Step 1: the two-row entry dialog. */
-    function SourceDialog(props) {
-      const state = props.state !== null && typeof props.state === 'object' ? props.state : {};
+    function SourceDialog(props: ClientDialogProps) {
+      const state = props.state !== null && typeof props.state === 'object' ? props.state : EMPTY_FLOW;
       const t = props.t;
       React.useEffect(() => {
         loadStatus(t);
@@ -1431,8 +1463,8 @@ window.__ModuleLoader__.load({
     }
 
     /** Step 2: distro picker. */
-    function DistroDialog(props) {
-      const state = props.state !== null && typeof props.state === 'object' ? props.state : {};
+    function DistroDialog(props: ClientDialogProps) {
+      const state = props.state !== null && typeof props.state === 'object' ? props.state : EMPTY_FLOW;
       const t = props.t;
       const busy = props.busy === true;
       const box = state.distros !== null && typeof state.distros === 'object' ? state.distros : null;
@@ -1494,11 +1526,11 @@ window.__ModuleLoader__.load({
     }
 
     /** Step 3: the Linux (or local-mode) folder browser. */
-    function FolderDialog(props) {
-      const state = props.state !== null && typeof props.state === 'object' ? props.state : {};
+    function FolderDialog(props: ClientDialogProps) {
+      const state = props.state !== null && typeof props.state === 'object' ? props.state : EMPTY_FLOW;
       const t = props.t;
       const busy = props.busy === true;
-      const listing = state.listing !== null && typeof state.listing === 'object' ? state.listing : {};
+      const listing = state.listing !== null && typeof state.listing === 'object' ? state.listing : { loading: false, error: null, data: null };
       const data = listing.data !== null && typeof listing.data === 'object' ? listing.data : null;
       const crumbs = crumbsFromListing(data);
       const loading = listing.loading === true;
@@ -1507,7 +1539,7 @@ window.__ModuleLoader__.load({
       const showHidden = state.showHidden === true;
       const entries = data !== null && Array.isArray(data.entries) ? data.entries : [];
       const visible = showHidden ? entries : entries.filter((entry) => !isHiddenEntry(entry));
-      const rows = filterEntries(visible, query);
+      const rows = filterEntries<ClientDirectoryEntry>(visible, query);
       const goPath = data !== null ? resolveQueryPath(data, query) : null;
       const canConfirm = data !== null
         && loading !== true
@@ -1519,13 +1551,13 @@ window.__ModuleLoader__.load({
         if (!canConfirm) return;
         void confirmFolder(t);
       };
-      const navigate = (path) => {
+      const navigate = (path: string | null | undefined) => {
         if (busy || loading) return;
         if (typeof path !== 'string' || path === '') return;
         loadListing(t, path);
       };
 
-      const crumbNodes = [];
+      const crumbNodes: import('react').ReactElement[] = [];
       if (data !== null && typeof data.parent === 'string' && data.parent !== '' && data.parent !== data.path) {
         crumbNodes.push(h('button', {
           key: 'up',
@@ -1607,16 +1639,16 @@ window.__ModuleLoader__.load({
               'aria-label': t('folder.search'),
               'data-drw-autofocus': true,
               disabled: busy,
-              onChange: (event) => {
+              onChange: (event: import('react').ChangeEvent<HTMLInputElement>) => {
                 flowStore.set({ search: event.target.value });
               },
-              onKeyDown: (event) => {
+              onKeyDown: (event: import('react').KeyboardEvent<HTMLInputElement>) => {
                 if (event.key !== 'Enter') return;
                 event.preventDefault();
                 const raw = typeof event.currentTarget.value === 'string' ? event.currentTarget.value.trim() : '';
                 if (raw === '') return;
                 const current = flowStore.get().listing;
-                const live = current !== null && typeof current === 'object' && current.data !== null ? current.data : null;
+                const live = isRecord(current) && current.data !== null ? current.data : null;
                 // An absolute path needs no listing; `~` resolves through home.
                 const target = raw.charAt(0) === '/' ? joinLinuxPath('/', raw) : (live === null ? null : resolveQueryPath(live, raw));
                 if (target !== null) loadListing(t, target);
@@ -1653,12 +1685,11 @@ window.__ModuleLoader__.load({
     }
 
     function pickerUnavailable() {
-      const error = new Error('directory-picker/unavailable');
-      error.code = 'directory-picker/unavailable';
+      const error = Object.assign(new Error('directory-picker/unavailable'), { code: 'directory-picker/unavailable' });
       return error;
     }
 
-    function resolveUiWorkspace(ctx) {
+    function resolveUiWorkspace(ctx: ClientContext) {
       try {
         if (ctx.uiWorkspace !== null && ctx.uiWorkspace !== undefined) return ctx.uiWorkspace;
       } catch (error) {
@@ -1680,7 +1711,7 @@ window.__ModuleLoader__.load({
      * Client plugin body.
      * @param ctx - client root context.
      */
-    function apply(ctx) {
+    function apply(ctx: ClientContext) {
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-remote-wsl: dictionaries');
 
       ctx.effect(() => {

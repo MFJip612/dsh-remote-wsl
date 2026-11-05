@@ -1,3 +1,10 @@
+import { errorCode, errorMessage, isRecord } from '../contracts.js'
+import type { Mapping, WslOrigin } from '../contracts.js'
+import type { WslConfig } from '../config.js'
+function isMapping(value: unknown): value is Mapping {
+  return isRecord(value) && typeof value.distro === 'string' && typeof value.linuxPath === 'string'
+    && typeof value.hostPath === 'string' && (value.mapped === 'windows' || value.mapped === 'unc')
+}
 /**
  * Durable mapping between a registered DSH workspace and its WSL origin.
  *
@@ -35,17 +42,17 @@ export function resolveDshHome() {
   return path.join(os.homedir(), '.dsh')
 }
 
-function isPlainObject(value) {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /**
  * Create the mapping store. `config` is the resolved plugin config; `service` is the WSL service.
  */
-export function createWorkspaceMappingStore(config) {
+export function createWorkspaceMappingStore(config: Pick<WslConfig, 'mountRoot'>) {
   const filePath = path.join(resolveDshHome(), FILE_NAME)
   let loaded = false
-  let state = { version: FILE_VERSION, workspaces: {} }
+  let state: { version: number; workspaces: Record<string, unknown> } = { version: FILE_VERSION, workspaces: {} }
   let writeQueue = Promise.resolve()
 
   async function load() {
@@ -53,14 +60,14 @@ export function createWorkspaceMappingStore(config) {
     loaded = true
     try {
       const text = await fsp.readFile(filePath, 'utf8')
-      const parsed = JSON.parse(text)
+      const parsed: unknown = JSON.parse(text)
       if (isPlainObject(parsed) && isPlainObject(parsed.workspaces)) {
         state = { version: FILE_VERSION, workspaces: { ...parsed.workspaces } }
       }
     } catch (error) {
-      if (error?.code !== 'ENOENT') {
+      if (errorCode(error) !== 'ENOENT') {
         // Corrupt file: keep the in-memory empty state, rewrite on the next mutation.
-        console.warn(`[dsh-remote-wsl] 无法读取 ${filePath}：${error?.message ?? error}`)
+        console.warn(`[dsh-remote-wsl] 无法读取 ${filePath}：${errorMessage(error)}`)
       }
       state = { version: FILE_VERSION, workspaces: {} }
     }
@@ -80,7 +87,7 @@ export function createWorkspaceMappingStore(config) {
     return writeQueue
   }
 
-  async function remember(entry) {
+  async function remember(entry: { hostPath?: unknown; distro?: unknown; linuxPath?: unknown; mapped?: unknown }) {
     await load()
     const hostPath = String(entry.hostPath ?? '')
     const distro = String(entry.distro ?? '').trim()
@@ -96,7 +103,7 @@ export function createWorkspaceMappingStore(config) {
     await persist()
   }
 
-  async function forget(hostPath) {
+  async function forget(hostPath: string) {
     await load()
     const key = hostPathKey(hostPath)
     if (state.workspaces[key] === undefined) return
@@ -106,14 +113,14 @@ export function createWorkspaceMappingStore(config) {
 
   async function list() {
     await load()
-    return Object.values(state.workspaces)
+    return Object.values(state.workspaces).filter(isMapping)
   }
 
   /**
    * Resolve a session cwd / model path to its WSL origin.
    * Accepts UNC spellings directly; drive paths only when a mapping was recorded.
    */
-  async function resolveCwd(cwd) {
+  async function resolveCwd(cwd: unknown): Promise<WslOrigin | undefined> {
     const value = String(cwd ?? '').trim()
     if (value.length === 0) return undefined
     const parsed = parseWslHostPath(value)
@@ -129,10 +136,12 @@ export function createWorkspaceMappingStore(config) {
     }
     await load()
     const key = hostPathKey(value)
-    const direct = state.workspaces[key]
+    const candidate = state.workspaces[key]
+    const direct = isMapping(candidate) ? candidate : undefined
     if (direct !== undefined) return { ...direct, rootHostPath: direct.hostPath, source: 'mapping' }
     // A subdirectory of a recorded workspace (e.g. the session cd'd deeper on the Windows side).
     for (const entry of Object.values(state.workspaces)) {
+      if (!isMapping(entry)) continue
       if (entry.mapped === 'windows' && isPathInsideHost(entry.hostPath, value)) {
         const relative = value.slice(entry.hostPath.length).replace(/^[\\/]+/u, '')
         const linuxPath = normalizeLinuxPath(
@@ -148,7 +157,7 @@ export function createWorkspaceMappingStore(config) {
    * Translate one path as the model wrote it (Linux absolute, `~`, Windows absolute, or relative)
    * into Linux and host spellings for a resolved WSL origin.
    */
-  async function resolveModelPath(origin, inputPath, options = {}) {
+  async function resolveModelPath(origin: Pick<WslOrigin, 'distro' | 'linuxPath'>, inputPath: unknown, options: { home?: string; mountRoot?: string } = {}) {
     const raw = String(inputPath ?? '').trim()
     const home = typeof options.home === 'string' && options.home.length > 0 ? options.home : '/'
     let linuxPath

@@ -3,7 +3,7 @@
  * Tool-runtime integration test: runs the WSL-side tools against the real distribution.
  *
  *   $env:ELECTRON_RUN_AS_NODE='1'
- *   & 'C:\Users\Mingf\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe' test\tools.test.js
+ *   & 'C:\Users\Mingf\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe' test\tools.test.ts
  *
  * Creates a scratch directory inside the distribution, exercises write/read/edit/glob/grep/bash,
  * and removes it again. Skips (exit 0) when WSL is unavailable.
@@ -13,26 +13,28 @@ import { spawn } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
+import { createWslService } from '../dist/lib/wsl-service.js'
+import { createWorkspaceMappingStore } from '../dist/lib/wsl-workspaces.js'
+import { createWslToolRuntime } from '../dist/lib/tool-wsl.js'
+import { resolveConfig } from '../dist/config.js'
+import type { ProcessOutcome, SubprocessPort, WslOrigin } from '../dist/contracts.js'
 
-const here = path.dirname(fileURLToPath(import.meta.url))
-const root = path.resolve(here, '..')
-const load = (relative) => import(pathToFileURL(path.join(root, relative)).href)
 
 let passed = 0
-const failures = []
-async function test(name, fn) {
+const failures: string[] = []
+async function test(name: string, fn: () => unknown | Promise<unknown>) {
   try {
     await fn()
     passed += 1
     console.log(`ok   ${name}`)
   } catch (error) {
     failures.push(name)
-    console.error(`FAIL ${name}\n     ${error?.stack ?? error}`)
+    console.error(`FAIL ${name}\n     ${error instanceof Error ? error.stack : error}`)
   }
 }
 
-function createSubprocessBridge() {
+function createSubprocessBridge(): SubprocessPort {
   return {
     async resolveExecutable(command) {
       return path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', command)
@@ -52,7 +54,7 @@ function createSubprocessBridge() {
       } else {
         child.stdin?.end()
       }
-      const done = new Promise((resolve, reject) => {
+      const done = new Promise<ProcessOutcome>((resolve, reject) => {
         child.on('error', reject)
         child.on('close', (code, signal) => resolve({ exitCode: code, signal }))
       })
@@ -72,26 +74,20 @@ const scratch = path.join(os.tmpdir(), `dsh-remote-wsl-test-${process.pid}`)
 
 async function main() {
   process.env.DSH_HOME = scratch
-  const [{ createWslService }, { createWorkspaceMappingStore }, { createWslToolRuntime }] =
-    await Promise.all([
-      load('lib/wsl-service.js'),
-      load('lib/wsl-workspaces.js'),
-      load('lib/tool-wsl.js'),
-    ])
 
-  const service = createWslService({ subprocess: createSubprocessBridge() }, {
+  const service = createWslService({ subprocess: createSubprocessBridge() }, resolveConfig({
     execTimeoutMs: 20000,
     maxReadBytes: 2_000_000,
     maxEntries: 2000,
     mountRoot: '',
-  })
+  }))
   const listed = await service.listDistros({ refresh: true })
   if (!listed.available || listed.distros.length === 0) {
     console.log('skip tool integration (WSL unavailable)')
     console.log(`\nPASS ${passed} FAIL ${failures.length}`)
     return
   }
-  const distro = listed.defaultDistro ?? listed.distros[0].name
+  const distro = listed.defaultDistro ?? Array.from<{ name: string }>(listed.distros)[0].name
   const identity = await service.resolveIdentity(distro)
   const home = identity.home
   const projectLinux = `${home}/.dsh-remote-wsl-test-${process.pid}`
@@ -99,7 +95,8 @@ async function main() {
   const sandboxPolicy = { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: '' }) }
 
   const listedProject = service.toHostPath(distro, projectLinux)
-  const origin = {
+  const origin: WslOrigin = {
+    hostPath: (await listedProject).hostPath, mapped: (await listedProject).mapped, source: 'mapping',
     distro,
     linuxPath: projectLinux,
     rootHostPath: (await listedProject).hostPath,
@@ -113,7 +110,7 @@ async function main() {
   const runtime = createWslToolRuntime({
     service,
     mappings,
-    config: { execTimeoutMs: 20000, maxReadBytes: 2_000_000, mountRoot: '' },
+    config: resolveConfig({ execTimeoutMs: 20000, maxReadBytes: 2_000_000, mountRoot: '' }),
     origin,
     home,
     session: { id: 'test' },
@@ -123,14 +120,14 @@ async function main() {
   try {
     await test('mutations notify before publication and expose complete before/after content', async () => {
       const file = `${projectLinux}/delivery.txt`
-      const calls = []
+    const calls: string[] = []
       const exec = { callId: 'delivery-edit' }
-      const integrated = createWslToolRuntime({ service, mappings, config: { maxReadBytes: 2_000_000 }, origin, home, session: { id: 'test' }, sandboxPolicy,
+      const integrated = createWslToolRuntime({ service, mappings, config: resolveConfig({ maxReadBytes: 2_000_000 }), origin, home, session: { id: 'test' }, sandboxPolicy,
         fileIntegration: {
           async prepare(kind, target, actor) {
             assert.equal(actor, exec)
             calls.push(`${kind}:${target.linuxPath}`)
-            return async () => calls.push('checked')
+            return async () => { calls.push('checked') }
           },
           async observed(target, actor) { assert.equal(actor, exec); calls.push(`observed:${target.linuxPath}`) },
         },
@@ -147,8 +144,8 @@ async function main() {
 
     await test('native mutation denial leaves the file unchanged', async () => {
       const file = `${projectLinux}/delivery.txt`
-      const denied = createWslToolRuntime({ service, mappings, config: {}, origin, home, session: { id: 'test' }, sandboxPolicy,
-        fileIntegration: { prepare: async () => { throw new Error('denied by native policy') } },
+      const denied = createWslToolRuntime({ service, mappings, config: resolveConfig({}), origin, home, session: { id: 'test' }, sandboxPolicy,
+        fileIntegration: { observed: async () => {}, prepare: async () => { throw new Error('denied by native policy') } },
       })
       await assert.rejects(denied.write({ file_path: file, content: 'wrong' }, {}), /denied by native policy/u)
       assert.match((await runtime.read({ file_path: file })).text, /after/u)
@@ -222,7 +219,7 @@ async function main() {
       const locked = createWslToolRuntime({
         service,
         mappings,
-        config: { execTimeoutMs: 20000, maxReadBytes: 2_000_000, mountRoot: '' },
+        config: resolveConfig({ execTimeoutMs: 20000, maxReadBytes: 2_000_000, mountRoot: '' }),
         origin,
         home,
         session: { id: 'test' },
@@ -236,7 +233,7 @@ async function main() {
       const scoped = createWslToolRuntime({
         service,
         mappings,
-        config: { execTimeoutMs: 20000, maxReadBytes: 2_000_000, mountRoot: '' },
+        config: resolveConfig({ execTimeoutMs: 20000, maxReadBytes: 2_000_000, mountRoot: '' }),
         origin,
         home,
         session: { id: 'test' },

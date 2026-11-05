@@ -1,3 +1,10 @@
+import { errorCode } from '../contracts.js'
+import type { ToolRuntimeInput, RunOptions, Execution } from '../contracts.js'
+export interface ToolArgs { file_path?: unknown; content?: unknown; offset?: unknown; limit?: unknown; old_string?: unknown; new_string?: unknown; replace_all?: unknown; path?: unknown; pattern?: unknown; include?: unknown; command?: unknown; workdir?: unknown; timeoutMs?: unknown }
+function stringContent(value: unknown): string {
+  if (typeof value !== 'string') throw new TypeError('content must be a string')
+  return value
+}
 /**
  * Execution primitives for the WSL-side agent tools.
  *
@@ -19,16 +26,16 @@ const MAX_BASH_OUTPUT_BYTES = 256 * 1024
 const MAX_GREP_MATCHES = 250
 const MAX_GLOB_RESULTS = 100
 
-function toolError(code, message) {
+function toolError(code: string, message: string) {
   return Object.assign(new Error(message), { code })
 }
 
-function textOf(error) {
+function textOf(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
 /** Strip a single trailing newline so rendered tool output stays tidy. */
-function trimTrailingNewline(text) {
+function trimTrailingNewline(text: string) {
   return text.endsWith('\n') ? text.slice(0, -1) : text
 }
 
@@ -44,11 +51,11 @@ function trimTrailingNewline(text) {
  * @param {object} input.session the live DSH Session (for sandbox policy resolution).
  * @param {object|undefined} input.sandboxPolicy `ctx.get('sandboxPolicy')`.
  */
-export function createWslToolRuntime({ service, mappings, config, origin, home, session, sandboxPolicy, fileIntegration }) {
+export function createWslToolRuntime({ service, mappings, config, origin, home, session, sandboxPolicy, fileIntegration }: ToolRuntimeInput) {
   const distro = origin.distro
   const maxReadBytes = Number(config.maxReadBytes) || 2_000_000
 
-  let mountRootPromise
+  let mountRootPromise: Promise<string> | undefined
   function mountRoot() {
     if (mountRootPromise === undefined) {
       mountRootPromise = service.getMountRoot(distro).catch(() => config.mountRoot || '/mnt')
@@ -56,7 +63,7 @@ export function createWslToolRuntime({ service, mappings, config, origin, home, 
     return mountRootPromise
   }
 
-  async function resolve(inputPath) {
+  async function resolve(inputPath: unknown) {
     const root = await mountRoot()
     return await mappings.resolveModelPath(origin, inputPath, { home, mountRoot: root })
   }
@@ -78,7 +85,7 @@ export function createWslToolRuntime({ service, mappings, config, origin, home, 
     // Reads are allowed in every mode.
   }
 
-  function assertWritable(hostPath) {
+  function assertWritable(hostPath: string) {
     const current = policy()
     if (current.mode === 'danger-full-access') return
     if (current.mode === 'read-only') {
@@ -107,7 +114,7 @@ export function createWslToolRuntime({ service, mappings, config, origin, home, 
     }
   }
 
-  async function runWslText(args, options = {}) {
+  async function runWslText(args: string[], options: RunOptions = {}) {
     const raw = await service.runRaw(args, options)
     if (raw.timedOut) throw toolError('wsl-timeout', 'WSL 命令超时')
     return {
@@ -117,7 +124,7 @@ export function createWslToolRuntime({ service, mappings, config, origin, home, 
     }
   }
 
-  async function readFileText(hostPath, linuxPath) {
+  async function readFileText(hostPath: string, linuxPath: string) {
     let buffer
     try {
       const stat = await fsp.stat(hostPath)
@@ -133,8 +140,8 @@ export function createWslToolRuntime({ service, mappings, config, origin, home, 
         await handle.close()
       }
     } catch (error) {
-      if (error?.code === 'ENOENT') throw toolError('not-found', `文件不存在：${linuxPath}`)
-      if (error?.code === 'EACCES' || error?.code === 'EPERM') {
+      if (errorCode(error) === 'ENOENT') throw toolError('not-found', `文件不存在：${linuxPath}`)
+      if (errorCode(error) === 'EACCES' || errorCode(error) === 'EPERM') {
         throw toolError('permission-denied', `没有读取权限：${linuxPath}`)
       }
       throw error
@@ -146,7 +153,7 @@ export function createWslToolRuntime({ service, mappings, config, origin, home, 
   }
 
   /** Publish UTF-8 text at `linuxPath` atomically through the distribution. */
-  async function publishText(hostPath, linuxPath, content, check, exec) {
+  async function publishText(hostPath: string, linuxPath: string, content: string, check?: () => Promise<void>, exec?: Execution) {
     assertWritable(hostPath)
     const temporary = `${linuxPath}.dsh-tmp-${process.pid}-${Date.now()}`
     const script = [
@@ -170,7 +177,7 @@ export function createWslToolRuntime({ service, mappings, config, origin, home, 
     return temporary
   }
 
-  async function read(args, exec) {
+  async function read(args: ToolArgs, exec?: Execution) {
     assertReadable()
     const target = await resolve(args.file_path)
     const text = await readFileText(target.hostPath, target.linuxPath)
@@ -188,20 +195,21 @@ export function createWslToolRuntime({ service, mappings, config, origin, home, 
     return { path: target.linuxPath, totalLines: total, text: `${header}\n${body}` }
   }
 
-  async function write(args, exec) {
+  async function write(args: ToolArgs, exec?: Execution) {
+    const content = stringContent(args.content)
     const target = await resolve(args.file_path)
     assertWritable(target.hostPath)
     const check = await fileIntegration?.prepare('write', target, exec)
     let before
     try { before = await readFileText(target.hostPath, target.linuxPath) }
-    catch (error) { if (error.code !== 'not-found') throw error; before = null }
-    await publishText(target.hostPath, target.linuxPath, args.content, check, exec)
+    catch (error) { if (errorCode(error) !== 'not-found') throw error; before = null }
+    await publishText(target.hostPath, target.linuxPath, content, check, exec)
     await fileIntegration?.observed(target, exec)
-    return { path: target.linuxPath, hostPath: target.hostPath, operation: before === null ? 'create' : 'update', before, after: args.content,
-      bytes: Buffer.byteLength(args.content, 'utf8'), text: `已写入 ${target.linuxPath}` }
+    return { path: target.linuxPath, hostPath: target.hostPath, operation: before === null ? 'create' : 'update', before, after: content,
+      bytes: Buffer.byteLength(content, 'utf8'), text: `已写入 ${target.linuxPath}` }
   }
 
-  async function edit(args, exec) {
+  async function edit(args: ToolArgs, exec?: Execution) {
     const oldString = String(args.old_string ?? '')
     const newString = String(args.new_string ?? '')
     if (oldString.length === 0) throw toolError('invalid-edit', 'old_string 不能为空')
@@ -232,7 +240,7 @@ export function createWslToolRuntime({ service, mappings, config, origin, home, 
     }
   }
 
-  async function glob(args) {
+  async function glob(args: ToolArgs, _exec?: Execution) {
     const base = await resolve(args.path ?? origin.linuxPath)
     const pattern = String(args.pattern ?? '')
     if (pattern.length === 0) throw toolError('invalid-glob', 'pattern 不能为空')
@@ -268,7 +276,7 @@ export function createWslToolRuntime({ service, mappings, config, origin, home, 
     }
   }
 
-  async function grep(args) {
+  async function grep(args: ToolArgs, _exec?: Execution) {
     const base = await resolve(args.path ?? origin.linuxPath)
     const pattern = String(args.pattern ?? '')
     if (pattern.length === 0) throw toolError('invalid-grep', 'pattern 不能为空')
@@ -298,7 +306,7 @@ export function createWslToolRuntime({ service, mappings, config, origin, home, 
     }
   }
 
-  async function bash(args) {
+  async function bash(args: ToolArgs, _exec?: Execution) {
     assertShellAllowed()
     const command = String(args.command ?? '')
     if (command.trim().length === 0) throw toolError('invalid-command', 'command 不能为空')

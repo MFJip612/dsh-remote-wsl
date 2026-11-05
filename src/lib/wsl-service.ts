@@ -1,3 +1,7 @@
+import { errorCode } from '../contracts.js'
+import type { HostServices, Identity, RunOptions } from '../contracts.js'
+import type { WslConfig } from '../config.js'
+type CacheEntry<T> = { value: T; expiresAt: number }
 /**
  * Host-side WSL service for dsh-remote-wsl.
  *
@@ -37,11 +41,11 @@ const IDENTITY_TTL_MS = 60_000
 const MOUNT_ROOT_TTL_MS = 300_000
 
 /** Error carrying a stable code the HTTP layer maps to a status. */
-export function codedError(code, message, extra) {
+export function codedError(code: string, message: string, extra?: Record<string, unknown>) {
   return Object.assign(new Error(message), { code, ...(extra ?? {}) })
 }
 
-function messageOf(error) {
+function messageOf(error: unknown) {
   if (error instanceof Error) return error.message
   return String(error)
 }
@@ -52,7 +56,7 @@ export function windowsSystemDirectory() {
   return path.win32.join(root, 'System32')
 }
 
-async function collectStream(stream, maxBytes) {
+async function collectStream(stream: AsyncIterable<Uint8Array | string> | null | undefined, maxBytes: number) {
   if (stream === undefined || stream === null) return Buffer.alloc(0)
   const chunks = []
   let size = 0
@@ -71,11 +75,11 @@ async function collectStream(stream, maxBytes) {
 /**
  * Create the service. `ctx` needs `subprocess`; `config` is the resolved plugin config.
  */
-export function createWslService(ctx, config) {
+export function createWslService(ctx: Pick<HostServices, 'subprocess'>, config: WslConfig) {
   const execTimeoutMs = Number(config.execTimeoutMs) || 15_000
   const maxEntries = Number(config.maxEntries) || 2000
 
-  let wslExecutablePromise
+  let wslExecutablePromise: Promise<string> | undefined
   async function resolveWslExecutable() {
     if (wslExecutablePromise === undefined) {
       wslExecutablePromise = (async () => {
@@ -97,7 +101,7 @@ export function createWslService(ctx, config) {
    * Returns `{ stdout, stderr, exitCode, timedOut }`; it does NOT throw on a non-zero exit
    * (callers decide) but does throw when the process could not be started.
    */
-  async function runRaw(args, options = {}) {
+  async function runRaw(args: string[], options: RunOptions = {}) {
     const executable = await resolveWslExecutable()
     const timeoutMs = Math.max(1000, Number(options.timeoutMs) || execTimeoutMs)
     const stdoutMax = Number(options.stdoutMaxBytes) || 8 * 1024 * 1024
@@ -156,7 +160,7 @@ export function createWslService(ctx, config) {
   }
 
   /** Run wsl.exe and return decoded UTF-8 stdout; throws with the best available detail. */
-  async function runText(args, options = {}) {
+  async function runText(args: string[], options: RunOptions = {}) {
     const result = await runRaw(args, options)
     const stdout = result.stdout.toString('utf8')
     const stderr = result.stderr.toString('utf8')
@@ -189,14 +193,14 @@ export function createWslService(ctx, config) {
     },
   })
 
-  const identityCache = new Map()
-  const mountRootCache = new Map()
+  const identityCache = new Map<string, CacheEntry<Identity>>()
+  const mountRootCache = new Map<string, CacheEntry<string>>()
 
   async function rawDistroList() {
     return discovery.listDistros()
   }
 
-  async function listDistros(options = {}) {
+  async function listDistros(options: { refresh?: boolean } = {}) {
     if (process.platform !== 'win32') {
       return {
         available: false,
@@ -244,7 +248,7 @@ export function createWslService(ctx, config) {
   }
 
   /** Validate a distro name against the installed list and return its canonical spelling. */
-  async function requireDistro(requested) {
+  async function requireDistro(requested: unknown) {
     const wanted = String(requested ?? '').trim()
     if (wanted.length === 0) throw codedError('invalid-request', '缺少 WSL 发行版名称')
     if (!isValidDistroName(wanted)) throw codedError('invalid-request', 'WSL 发行版名称无效')
@@ -261,7 +265,7 @@ export function createWslService(ctx, config) {
     return match
   }
 
-  function cacheGet(cache, key, ttlMs) {
+  function cacheGet<T>(cache: Map<string, CacheEntry<T>>, key: string, ttlMs: number) {
     const entry = cache.get(key)
     if (entry === undefined) return undefined
     if (entry.expiresAt <= Date.now()) {
@@ -271,20 +275,20 @@ export function createWslService(ctx, config) {
     return entry
   }
 
-  function cacheRemember(cache, key, value, ttlMs) {
+  function cacheRemember<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, ttlMs: number) {
     const entry = { value, expiresAt: Date.now() + ttlMs }
     cache.set(key, entry)
     return entry
   }
 
   /** Resolve the distribution's default user and HOME (sentinel probe, then /etc fallback). */
-  async function resolveIdentity(requestedDistro) {
+  async function resolveIdentity(requestedDistro: string): Promise<Identity> {
     const distro = (await requireDistro(requestedDistro)).name
     const key = distro.toLowerCase()
     const cached = cacheGet(identityCache, key, IDENTITY_TTL_MS)
     if (cached !== undefined) return cached.value
     const script = `printf '%s\\n' '${IDENTITY_SENTINEL}' "$WSL_DISTRO_NAME" "$(id -un)" "$HOME"`
-    const run = (async () => {
+    const run = (async (): Promise<Identity> => {
       let probeError
       try {
         const output = await runText(
@@ -323,12 +327,12 @@ export function createWslService(ctx, config) {
     }
   }
 
-  async function readEtcFile(distro, name) {
+  async function readEtcFile(distro: string, name: string) {
     const unc = `\\\\wsl.localhost\\${distro}\\etc\\${name}`
     return await fsp.readFile(unc, 'utf8')
   }
 
-  async function readIdentityFromEtc(distro) {
+  async function readIdentityFromEtc(distro: string): Promise<Identity> {
     const [wslConf, passwd] = await Promise.all([
       readEtcFile(distro, 'wsl.conf').catch(() => ''),
       readEtcFile(distro, 'passwd').catch(() => ''),
@@ -339,7 +343,7 @@ export function createWslService(ctx, config) {
     return { distro, user: user || 'root', home, source: 'etc', reportedDistro: distro }
   }
 
-  async function getMountRoot(distro) {
+  async function getMountRoot(distro: string) {
     const key = distro.toLowerCase()
     const cached = cacheGet(mountRootCache, key, MOUNT_ROOT_TTL_MS)
     if (cached !== undefined) return cached.value
@@ -359,12 +363,12 @@ export function createWslService(ctx, config) {
     return value
   }
 
-  async function toHostPath(distro, linuxPath) {
+  async function toHostPath(distro: string, linuxPath: string) {
     const mountRoot = await getMountRoot(distro)
     return linuxToHostPath(linuxPath, distro, { mountRoot })
   }
 
-  async function resolveLinuxPath(distro, requestedPath) {
+  async function resolveLinuxPath(distro: string, requestedPath: unknown) {
     const identity = await resolveIdentity(distro).catch(() => null)
     const home = identity?.home ?? '/root'
     const raw = String(requestedPath ?? '').trim()
@@ -374,7 +378,7 @@ export function createWslService(ctx, config) {
     return normalizeLinuxPath(joinLinux(home, raw))
   }
 
-  async function readdirViaShare(hostPath) {
+  async function readdirViaShare(hostPath: string) {
     const dirents = await fsp.readdir(hostPath, { withFileTypes: true })
     const entries = []
     for (const dirent of dirents) {
@@ -396,7 +400,7 @@ export function createWslService(ctx, config) {
     return entries
   }
 
-  async function readdirViaWsl(distro, linuxPath) {
+  async function readdirViaWsl(distro: string, linuxPath: string) {
     const output = await runText(
       ['-d', distro, '--exec', 'find', linuxPath, '-maxdepth', '1', '-mindepth', '1', '-type', 'd', '-printf', '%f\\n'],
       { timeoutMs: Math.max(execTimeoutMs, 20_000) },
@@ -412,7 +416,7 @@ export function createWslService(ctx, config) {
    * List one Linux directory (directories only). `path` defaults to the user's HOME.
    * Returns the listing shape consumed by the client plus path-mapping facts.
    */
-  async function listPath(requestedDistro, requestedPath, options = {}) {
+  async function listPath(requestedDistro: string, requestedPath: unknown, options: { hidden?: boolean } = {}) {
     const distroEntry = await requireDistro(requestedDistro)
     const distro = distroEntry.name
     const identity = await resolveIdentity(distro).catch(() => null)
@@ -461,15 +465,15 @@ export function createWslService(ctx, config) {
     }
   }
 
-  function describeListingError(error, linuxPath) {
-    const code = error?.code
+  function describeListingError(error: unknown, linuxPath: string) {
+    const code = errorCode(error)
     if (code === 'ENOENT') return `此文件夹不存在：${linuxPath}`
     if (code === 'EACCES' || code === 'EPERM') return `没有访问权限：${linuxPath}`
     if (code === 'ENOTDIR') return `不是文件夹：${linuxPath}`
     return `无法读取文件夹 ${linuxPath}：${messageOf(error)}`
   }
 
-  async function directoryExists(distro, linuxPath) {
+  async function directoryExists(distro: string, linuxPath: string) {
     const mapped = await toHostPath(distro, linuxPath)
     try {
       const stat = await fsp.stat(mapped.hostPath)
@@ -480,7 +484,7 @@ export function createWslService(ctx, config) {
   }
 
   /** Wake a stopped distribution in the background (the first share access would do it too). */
-  function warm(requestedDistro) {
+  function warm(requestedDistro: string) {
     const task = (async () => {
       const entry = await requireDistro(requestedDistro)
       await runText(['-d', entry.name, '--exec', 'true'], {

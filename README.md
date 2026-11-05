@@ -27,7 +27,7 @@ Open **a project inside a WSL distribution** directly in DeepSeek Harness (DSH):
 **4. Register as a workspace.**
 
 - Projects on the Linux filesystem are registered as `\\wsl.localhost\<distro>\<path>` (the `\\wsl$` fallback form is probed automatically).
-- Projects under `/mnt/<drive>/...` are registered as the real Windows path (for example `E:\source\proj`) — WSL's 9P share denies access to `/mnt`, so only the real drive path is readable and writable; the plugin remembers which distribution it came from.
+- Projects under `/mnt/<drive>/...` are registered as the real Windows path (for example `D:\work\proj`) — WSL's 9P share denies access to `/mnt`, so only the real drive path is readable and writable; the plugin remembers which distribution it came from.
 - Afterwards, in a new session, the workspace is an ordinary DSH workspace; only the execution plane differs.
 
 **5. Terminal inside the distribution.** Opening the sidebar terminal in this workspace actually runs
@@ -50,6 +50,8 @@ Install the local directory from DSH's Plugins page, or:
 ```powershell
 dsh plugin --profile web add github:MFJip612/dsh-remote-wsl
 ```
+
+The repository contains TypeScript sources only. Run `npm ci` (which builds automatically) or `npm run build` before installing a local directory. GitHub installs build through `prepare`; if pnpm blocks build scripts, allow the exact package key reported by the installer in that profile's `pnpm-workspace.yaml`, then retry. Alternatively, run `npm pack` and install the tarball containing compiled artifacts.
 
 You can also ask the agent in a session to install that directory with the plugin manager. `link:` only guarantees that files in this directory are read; it does not guarantee a running Host reloads code. **Under the default configuration, Host-side code changes require a full quit and restart of DSH**; browser-side code changes only need a page refresh. DSH's default HMR configuration is `root: []`, which watches only configuration files. If the quit prompt reports a running task, wait for it to finish before restarting.
 
@@ -107,22 +109,42 @@ The tools' directory gate checks only the target path of `write` / `edit`; it is
 - The file tree, code preview, and change history are still read by DSH on the Windows side through the 9P share, so very large directories are slower than on native Linux.
 - A distribution starts automatically the first time it is accessed (this may take several seconds).
 
+## TypeScript development
+
+Maintained sources live in `src/`: Host ESM modules, `src/client.ts` for the browser, and `src/scripts/repair-legacy.cts` for the explicit recovery CLI. The compiled browser script keeps the DSH module-loader registration and uses the host's React instance.
+
+```powershell
+npm ci
+npm run check # Build the plugin, then strictly typecheck tests and the build script
+npm run build # Generate loadable JavaScript and Host declarations
+npm test      # Build, check public entries/config, and run behavior regressions
+npm pack      # Build automatically before packaging
+```
+
+Requires Node.js >= 24.9.0. Product sources, build scripts, and tests are all TypeScript. Previous JavaScript files at the root and under `lib/` have been removed. All JavaScript and Host declarations are generated only into Git-ignored `dist/`; generated artifacts are not committed. Public package entries point to `dist/`, and packaging automatically builds the runtime files and static resources. The build works independently of the DSH source checkout.
+
+The recovery CLI source is `src/scripts/repair-legacy.cts`; execute its compiled `dist/scripts/repair-legacy.cjs` entry. It still defaults to report-only and modifies logs only with explicit `--apply`.
+
+The exported Standard Schema `Config` is compatible with Cordis and preserves existing fields, defaults, and input normalization. Development types use Cordis 4.0.5, matching the Desktop used for validation; runtime services and React remain supplied by DSH.
+
+For linked installs, build source changes before restarting the Host or refreshing the browser. Host changes still require fully exiting and restarting DSH. Real-WSL sections of `npm test` skip when WSL is unavailable; the two Desktop integration tests below require real WSL and fail when it is missing.
+
 ## Tests
 
 ```powershell
 $env:ELECTRON_RUN_AS_NODE='1'
 $exe = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\DeepSeek Harness.exe"
-& $exe test\pure.test.js         # pure functions (distribution parsing, path mapping, wsl.conf/passwd)
-& $exe test\run.js               # Host services + real WSL (identity, directories, bash)
-& $exe test\tools.test.js        # tool runtime + real WSL (write/read/edit/glob/grep/bash/sandbox gate)
-& $exe test\registration.test.js # registration layer (agent-scoped tool set, terminal routing wrapper)
-& $exe test\desktop-runtime.cjs | Out-String # the installed DSH's real Agent/tool execution chain + real WSL; no model cost
-& $exe test\desktop-deliveries.cjs | Out-String # real file-change summary, diff, and present delivery events; isolated WSL test directory
+& $exe test\pure.test.ts         # pure functions (distribution parsing, path mapping, wsl.conf/passwd)
+& $exe test\run.ts               # Host services + real WSL (identity, directories, bash)
+& $exe test\tools.test.ts        # tool runtime + real WSL (write/read/edit/glob/grep/bash/sandbox gate)
+& $exe test\registration.test.ts # registration layer (agent-scoped tool set, terminal routing wrapper)
+& $exe test\desktop-runtime.cts | Out-String # the installed DSH's real Agent/tool execution chain + real WSL; no model cost
+& $exe test\desktop-deliveries.cts | Out-String # real file-change summary, diff, and present delivery events; isolated WSL test directory
 ```
 
 When no `node.exe` is on PATH, run with the Electron bundled with DSH Desktop in Node mode (as above). Sections that need a real WSL show `skipped` when it is unavailable.
 
-`test/desktop-runtime.cjs` must run through the installed DSH Desktop executable and requires access to WSL; it fails rather than skips when the environment is missing. The test replaces model network responses while keeping DSH's real Cordis, Agent loop, inbox, tool registration, tool execution, and subprocess services, covering a new session completing a conversation, in-memory inbox recovery, and multi-frame Zstd on-disk corruption rejection, write-lock exclusion, backup, and post-repair official reads. Conversations are created in memory and run read-only commands in the Linux HOME; disk tests use only temporary directories and do not change desktop sessions or user projects.
+`test/desktop-runtime.cts` must run through the installed DSH Desktop executable and requires access to WSL; it fails rather than skips when the environment is missing. The test replaces model network responses while keeping DSH's real Cordis, Agent loop, inbox, tool registration, tool execution, and subprocess services, covering a new session completing a conversation, in-memory inbox recovery, and multi-frame Zstd on-disk corruption rejection, write-lock exclusion, backup, and post-repair official reads. Conversations are created in memory and run read-only commands in the Linux HOME; disk tests use only temporary directories and do not change desktop sessions or user projects.
 
 ## Changelog
 
